@@ -1246,10 +1246,10 @@ export default function PreventionHealingWorkspace() {
               <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
               <div>
                 <h3 className="text-sm font-semibold text-amber-900">
-                  Data Governance & Inactive Staff Quarantine
+                  Data Governance & Inactive Staff Quarantine (Account Activation Disabled by Policy)
                 </h3>
                 <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                  The original Excel tracker contains 26 staff names with positions but <strong>zero email addresses</strong>. Under CRBCL security policies, no active user accounts, shared logins, or passwords may be generated without verified individual identity. Staff remain stored in this inactive pending queue. Once a verified CRBCL email is entered and approved, an active Employee profile is created, and all their historical activities are linked automatically.
+                  The original Excel tracker contains staff names and positions but <strong>zero email addresses</strong>. Under CRBCL security policies, direct staff login activation is disabled by default (<code className="font-mono text-[11px] bg-amber-200/60 px-1 py-0.5 rounded">CRBCL_PH_STAFF_ACTIVATION_ENABLED=false</code>). Real employees remain quarantined in this queue. Clicking <em>Verify & Link Profile</em> verifies the employee's work email and links their HR Employee profile and historical program records (status: <strong>VERIFIED_PENDING_ACCOUNT</strong>), but <strong>strictly does not activate login credentials</strong>.
                 </p>
               </div>
             </div>
@@ -1499,6 +1499,19 @@ export default function PreventionHealingWorkspace() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Rollout Control Policy Notice */}
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3.5 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-blue-950">
+                    Historical Import Execution Rollout Control (<code className="font-mono text-[10px] bg-blue-200/60 px-1 py-0.5 rounded">CRBCL_PH_REAL_IMPORT_ENABLED=false</code>)
+                  </div>
+                  <p className="text-blue-800 mt-0.5 leading-relaxed">
+                    Live database ingestion of historical spreadsheets is strictly disabled by default. Administrators can safely upload workbooks, parse sheets, validate financial calculations, preview row ledgers, and detect duplicates. Database write operations remain locked until formal release authorization is granted by CRBCL leadership.
+                  </p>
+                </div>
+              </div>
+
               {/* Step indicator */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <div className="p-2.5 rounded-lg border border-border bg-muted/30">

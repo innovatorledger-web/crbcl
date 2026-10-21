@@ -348,6 +348,7 @@ class PHImportBatch(Base, TimestampMixin):
     )
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     worksheet_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     record_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # ENHANCEMENT_PROGRAMS | FAMILY_SUPPORT | OTHER_NATIONS

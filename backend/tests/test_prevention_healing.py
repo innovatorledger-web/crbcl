@@ -21,9 +21,11 @@ from decimal import Decimal
 import openpyxl
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import get_settings
+from app.models.case_note import CaseNote
 from app.models.org_ops import Employee
 from app.models.person import Person
 from app.models.prevention_healing import (
@@ -32,6 +34,7 @@ from app.models.prevention_healing import (
     OtherNationsSupport,
     PHClientRef,
     PHImportBatch,
+    PHImportRow,
     PendingStaffProfile,
 )
 
@@ -276,25 +279,41 @@ async def test_staff_onboarding_inactive_and_activation_workflow(
     assert login_attempt.status_code == 401
     assert "invalid" in login_attempt.text.lower()
 
-    # 8. Separate Account Activation: Admin explicitly provisions a login account
-    acc_act = await client.post(
+    # 8. Rollout Control Test: Account Activation is DISABLED by default
+    settings = get_settings()
+    assert settings.crbcl_ph_staff_activation_enabled is False
+
+    refused_act = await client.post(
         f"/api/v1/ph/pending-staff/{profile_id}/activate-account",
         json={"password": "VerifiedPassword2026!"},
         headers=headers,
     )
-    assert acc_act.status_code == 200
-    acc_data = acc_act.json()
-    assert acc_data["onboarding_status"] == "ACCOUNT_ACTIVATED"
-    assert acc_data["has_login_account"] is True
-    assert acc_data["can_authenticate"] is True
+    assert refused_act.status_code == 403
+    assert "disabled by administrative policy" in refused_act.text.lower()
 
-    # 9. Now employee CAN authenticate with their newly provisioned credentials
-    login_success = await client.post(
-        "/api/v1/auth/login",
-        json={"email": "valerie.standingready@crbcl.ca", "password": "VerifiedPassword2026!"},
-    )
-    assert login_success.status_code == 200
-    assert "user" in login_success.json()
+    # 9. Temporarily enable rollout control for authorized activation testing
+    settings.crbcl_ph_staff_activation_enabled = True
+    try:
+        acc_act = await client.post(
+            f"/api/v1/ph/pending-staff/{profile_id}/activate-account",
+            json={"password": "VerifiedPassword2026!"},
+            headers=headers,
+        )
+        assert acc_act.status_code == 200
+        acc_data = acc_act.json()
+        assert acc_data["onboarding_status"] == "ACCOUNT_ACTIVATED"
+        assert acc_data["has_login_account"] is True
+        assert acc_data["can_authenticate"] is True
+
+        # 10. Now employee CAN authenticate with their provisioned credentials
+        login_success = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "valerie.standingready@crbcl.ca", "password": "VerifiedPassword2026!"},
+        )
+        assert login_success.status_code == 200
+        assert "user" in login_success.json()
+    finally:
+        settings.crbcl_ph_staff_activation_enabled = False
 
 
 @pytest.mark.asyncio
@@ -376,7 +395,79 @@ async def test_client_reconciliation_linking(
     assert fsr.person_id == person.id
     assert fsr.client_match_status == "CONFIRMED"
 
-    # 4. Reject a different client ref via reconcile endpoint
+    # 4. Negative Test: Idempotent re-confirmation (same person) returns 200 OK
+    idem_res = await client.post(
+        f"/api/v1/ph/client-refs/{cref_id}/reconcile",
+        json={"action": "CONFIRM", "person_id": str(person.id)},
+        headers=headers,
+    )
+    assert idem_res.status_code == 200
+    assert idem_res.json()["status"] == "CONFIRMED"
+
+    # 5. Negative Test: Conflicting re-confirmation (different person) returns 409 Conflict
+    person2 = Person(person_id_number="9876543210", first_name="Jane", last_name="Pelletier")
+    db_session.add(person2)
+    await db_session.commit()
+    await db_session.refresh(person2)
+
+    conflict_res = await client.post(
+        f"/api/v1/ph/client-refs/{cref_id}/reconcile",
+        json={"action": "CONFIRM", "person_id": str(person2.id)},
+        headers=headers,
+    )
+    assert conflict_res.status_code == 409
+    assert "already confirmed" in conflict_res.text.lower()
+
+    # 6. Negative Test: Nonexistent Person ID returns 404 Not Found
+    cref_missing = PHClientRef(legacy_id="RM-MISSING", legacy_id_type="REDMANE", status="UNRESOLVED")
+    db_session.add(cref_missing)
+    await db_session.commit()
+    await db_session.refresh(cref_missing)
+
+    missing_res = await client.post(
+        f"/api/v1/ph/client-refs/{cref_missing.id}/reconcile",
+        json={"action": "CONFIRM", "person_id": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert missing_res.status_code == 404
+
+    # 7. Negative Test: Person without valid 10-digit ID returns 400 Bad Request
+    invalid_person = Person(person_id_number="12345", first_name="Invalid", last_name="Digits")
+    db_session.add(invalid_person)
+    await db_session.commit()
+    await db_session.refresh(invalid_person)
+
+    invalid_res = await client.post(
+        f"/api/v1/ph/client-refs/{cref_missing.id}/reconcile",
+        json={"action": "CONFIRM", "person_id": str(invalid_person.id)},
+        headers=headers,
+    )
+    assert invalid_res.status_code == 400
+    assert "10 numeric digits" in invalid_res.text or "10-digit" in invalid_res.text
+
+    # 8. Negative Test: Conflicting link in FamilySupportRecord returns 409 Conflict
+    cref_col = PHClientRef(legacy_id="RM-COLLISION", legacy_id_type="REDMANE", status="UNRESOLVED")
+    db_session.add(cref_col)
+    fsr_col = FamilySupportRecord(
+        program="Family Support",
+        client_ref_legacy_id="RM-COLLISION",
+        person_id=person2.id,
+        client_match_status="CONFIRMED",
+        fiscal_year="2026-2027",
+    )
+    db_session.add(fsr_col)
+    await db_session.commit()
+    await db_session.refresh(cref_col)
+
+    col_res = await client.post(
+        f"/api/v1/ph/client-refs/{cref_col.id}/reconcile",
+        json={"action": "CONFIRM", "person_id": str(person.id)},
+        headers=headers,
+    )
+    assert col_res.status_code == 409
+    assert "conflict" in col_res.text.lower()
+
+    # 9. Reject a different client ref via reconcile endpoint
     cref2 = PHClientRef(legacy_id="RM-INVALID", legacy_id_type="REDMANE", status="UNRESOLVED")
     db_session.add(cref2)
     await db_session.commit()
@@ -399,10 +490,11 @@ async def test_excel_import_wizard_analyze_approve_execute(
 
     1. Generate synthetic workbook in memory with Enhancement Programs headers
     2. Upload to /ph/import/analyze (Step 2 & 3: Validate & preview)
-    3. Verify batch in AWAITING_APPROVAL (Step 6 & 7)
-    4. Approve batch /ph/import/approve/{batch_id}
-    5. Execute batch /ph/import/execute/{batch_id} (Step 8: Transact)
-    6. Verify records imported into database
+    3. Verify execution blocked by default rollout control (CRBCL_PH_REAL_IMPORT_ENABLED=False)
+    4. Temporarily enable rollout control and test approval & execution
+    5. Verify records imported into database
+    6. Verify duplicate workbook upload is rejected with 400 Bad Request
+    7. Verify import batch cancellation cascades CANCELLED status to staged rows
     """
     headers = executive_director_user["headers"]
 
@@ -476,24 +568,37 @@ async def test_excel_import_wizard_analyze_approve_execute(
     assert "Synthetic Staff One" in analyze_data["employee_matching_issues"]
     assert "Synthetic Staff Two" in analyze_data["employee_matching_issues"]
 
-    # 3. Verify cannot execute before approval
-    exec_fail = await client.post(f"/api/v1/ph/import/execute/{batch_id}", headers=headers)
-    assert exec_fail.status_code == 400
-    assert "APPROVED" in exec_fail.text
+    # 3. Verify execution blocked by default rollout control
+    settings = get_settings()
+    assert settings.crbcl_ph_real_import_enabled is False
 
-    # 4. Approve batch
-    appr_res = await client.post(f"/api/v1/ph/import/approve/{batch_id}", headers=headers)
-    assert appr_res.status_code == 200
-    assert appr_res.json()["status"] == "APPROVED"
+    exec_blocked = await client.post(f"/api/v1/ph/import/execute/{batch_id}", headers=headers)
+    assert exec_blocked.status_code == 403
+    assert "disabled by administrative policy" in exec_blocked.text.lower()
 
-    # 5. Execute import
-    exec_res = await client.post(f"/api/v1/ph/import/execute/{batch_id}", headers=headers)
-    assert exec_res.status_code == 200
-    exec_data = exec_res.json()
-    assert exec_data["status"] == "COMPLETED"
-    assert exec_data["imported_rows"] == 2
+    # 4. Temporarily enable rollout control for authorized testing
+    settings.crbcl_ph_real_import_enabled = True
+    try:
+        # Cannot execute before approval
+        exec_fail = await client.post(f"/api/v1/ph/import/execute/{batch_id}", headers=headers)
+        assert exec_fail.status_code == 400
+        assert "APPROVED" in exec_fail.text
 
-    # 6. Verify records exist in EnhancementProgram table
+        # Approve batch
+        appr_res = await client.post(f"/api/v1/ph/import/approve/{batch_id}", headers=headers)
+        assert appr_res.status_code == 200
+        assert appr_res.json()["status"] == "APPROVED"
+
+        # Execute import
+        exec_res = await client.post(f"/api/v1/ph/import/execute/{batch_id}", headers=headers)
+        assert exec_res.status_code == 200
+        exec_data = exec_res.json()
+        assert exec_data["status"] == "COMPLETED"
+        assert exec_data["imported_rows"] == 2
+    finally:
+        settings.crbcl_ph_real_import_enabled = False
+
+    # 5. Verify records exist in EnhancementProgram table
     db_records = await db_session.execute(
         select(EnhancementProgram).where(EnhancementProgram.import_batch_id == uuid.UUID(batch_id))
     )
@@ -501,14 +606,42 @@ async def test_excel_import_wizard_analyze_approve_execute(
     assert len(records) == 2
     assert {r.program for r in records} == {"Youth Healing Circle", "Parenting Wisdom"}
 
-    # 7. Test cancelling a newly analyzed batch
-    analyze_res2 = await client.post("/api/v1/ph/import/analyze", files=files, headers=headers)
+    # 6. Test duplicate prevention: Uploading the exact same file returns 400 Bad Request
+    dup_res = await client.post("/api/v1/ph/import/analyze", files=files, headers=headers)
+    assert dup_res.status_code == 400
+    assert "duplicate" in dup_res.text.lower() and "detected" in dup_res.text.lower()
+
+    # 7. Test cancelling a newly analyzed distinct batch
+    wb2 = openpyxl.Workbook()
+    ws2 = wb2.active
+    ws2.title = "Enhancement Programs"
+    for c_idx, h in enumerate(headers_row, 1):
+        ws2.cell(7, c_idx, h)
+    ws2.cell(8, 2, "2026-06-15")
+    ws2.cell(8, 3, "Distinct Staff Three")
+    ws2.cell(8, 5, "Youth Workshop Distinct")
+    ws2.cell(8, 31, 150.00)
+    buf2 = io.BytesIO()
+    wb2.save(buf2)
+    buf2.seek(0)
+
+    files2 = {"file": ("synthetic_tracker_2.xlsx", buf2.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    analyze_res2 = await client.post("/api/v1/ph/import/analyze", files=files2, headers=headers)
     assert analyze_res2.status_code == 200
     batch_id2 = analyze_res2.json()["batch_id"]
 
     cancel_res = await client.post(f"/api/v1/ph/import/cancel/{batch_id2}", headers=headers)
     assert cancel_res.status_code == 200
     assert cancel_res.json()["status"] == "CANCELLED"
+
+    # Verify staged rows in DB also have status CANCELLED
+    staged_rows = await db_session.execute(
+        select(PHImportRow).where(PHImportRow.batch_id == uuid.UUID(batch_id2))
+    )
+    rows_list = staged_rows.scalars().all()
+    assert len(rows_list) >= 1
+    for r in rows_list:
+        assert r.status == "CANCELLED"
 
 
 @pytest.mark.asyncio
@@ -571,3 +704,131 @@ async def test_security_it_admin_boundary(
     # IT Admin attempting to execute import
     res2 = await client.post(f"/api/v1/ph/import/execute/{uuid.uuid4()}", headers=headers)
     assert res2.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_activation_and_reconciliation_attempts(
+    client: AsyncClient, caseworker_user
+):
+    """Verifies that unauthorized caseworkers without PH admin permissions cannot verify, activate, reconcile, or approve."""
+    headers = caseworker_user["headers"]
+    fake_id = str(uuid.uuid4())
+
+    # Caseworker cannot verify & link staff
+    res_link = await client.post(f"/api/v1/ph/pending-staff/{fake_id}/verify-and-link", json={"email": "test@crbcl.ca"}, headers=headers)
+    assert res_link.status_code == 403
+
+    # Caseworker cannot activate account
+    res_act = await client.post(f"/api/v1/ph/pending-staff/{fake_id}/activate-account", json={"password": "Pass123!"}, headers=headers)
+    assert res_act.status_code == 403
+
+    # Caseworker cannot reconcile client refs
+    res_rec = await client.post(f"/api/v1/ph/client-refs/{fake_id}/reconcile", json={"action": "CONFIRM"}, headers=headers)
+    assert res_rec.status_code == 403
+
+    # Caseworker cannot approve import batches
+    res_appr = await client.post(f"/api/v1/ph/import/approve/{fake_id}", headers=headers)
+    assert res_appr.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_existing_test_users_unaffected(
+    client: AsyncClient,
+    caseworker_user,
+    supervisor_user,
+    it_admin_user,
+    finance_user,
+    executive_director_user,
+):
+    """Existing test accounts across all roles must remain completely intact, active, and able to authenticate."""
+    for test_fixture in [caseworker_user, supervisor_user, it_admin_user, finance_user, executive_director_user]:
+        user = test_fixture["user"]
+        assert user.is_active is True
+        login_res = await client.post(
+            "/api/v1/auth/login",
+            json={"email": user.email, "password": "password123"},
+        )
+        assert login_res.status_code == 200, f"Login failed for existing test user {user.email}"
+        token_data = login_res.json()
+        assert "access_token" in token_data
+        assert token_data["user"]["email"] == user.email
+
+
+@pytest.mark.asyncio
+async def test_case_note_privacy_boundary(
+    client: AsyncClient, executive_director_user, finance_user, db_session: AsyncSession
+):
+    """Verifies:
+    1. Creating or modifying Prevention & Healing records never creates or modifies CaseNote entries.
+    2. Finance users cannot access Case Note clinical narratives.
+    """
+    ed_headers = executive_director_user["headers"]
+    fin_headers = finance_user["headers"]
+
+    # Count initial case notes
+    cn_initial = await db_session.execute(select(func.count(CaseNote.id)))
+    initial_count = cn_initial.scalar_one()
+
+    # Create FamilySupportRecord
+    fsr_payload = {
+        "program": "Family Support Services",
+        "support_type": "Crisis Intervention",
+        "service_area": "Regina Urban",
+        "record_date": "2026-08-01",
+        "city": "Regina",
+        "province": "SK",
+        "account_code": "41000",
+        "expense_gift_card": "100.00",
+        "comments": "Confidential family support interaction.",
+        "fiscal_year": "2026-2027",
+    }
+    create_res = await client.post("/api/v1/ph/family-support", json=fsr_payload, headers=ed_headers)
+    assert create_res.status_code == 201
+
+    # Verify zero CaseNote records were added or altered
+    cn_after = await db_session.execute(select(func.count(CaseNote.id)))
+    assert cn_after.scalar_one() == initial_count
+
+    # Finance user attempting to read case notes
+    cn_attempt = await client.get(f"/api/v1/cases/{uuid.uuid4()}/notes", headers=fin_headers)
+    assert cn_attempt.status_code in [403, 404]
+
+
+@pytest.mark.asyncio
+async def test_financial_decimal_accuracy_and_fiscal_years(
+    client: AsyncClient, executive_director_user, db_session: AsyncSession
+):
+    """Verifies that monetary calculations maintain exact Decimal precision down to the cent,
+    and fiscal year queries do not leak data across fiscal boundaries.
+    """
+    headers = executive_director_user["headers"]
+
+    # Record in 2025-2026
+    ep_prev = EnhancementProgram(
+        program="Historical Gathering",
+        fiscal_year="2025-2026",
+        expense_gift_card=Decimal("123.45"),
+        expense_purchase_order=Decimal("234.55"),  # Total = 358.00
+    )
+    # Record in 2026-2027
+    ep_curr = EnhancementProgram(
+        program="Current Gathering",
+        fiscal_year="2026-2027",
+        expense_gift_card=Decimal("111.11"),
+        expense_purchase_order=Decimal("222.22"),
+        expense_eft=Decimal("333.33"),  # Total = 666.66
+    )
+    db_session.add_all([ep_prev, ep_curr])
+    await db_session.commit()
+
+    # Query 2025-2026
+    res_prev = await client.get("/api/v1/ph/summary?fiscal_year=2025-2026", headers=headers)
+    assert res_prev.status_code == 200
+    assert res_prev.json()["fiscal_year"] == "2025-2026"
+    assert res_prev.json()["enhancement_programs"]["total_cost"] == 358.00
+
+    # Query 2026-2027
+    res_curr = await client.get("/api/v1/ph/summary?fiscal_year=2026-2027", headers=headers)
+    assert res_curr.status_code == 200
+    assert res_curr.json()["fiscal_year"] == "2026-2027"
+    assert res_curr.json()["enhancement_programs"]["total_cost"] == 666.66

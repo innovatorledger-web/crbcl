@@ -75,12 +75,21 @@ When the administrator clicks *"Confirm & Link Profile"*:
 > [!IMPORTANT]
 > **No Login Privileges:** Completing Stage 5 strictly **DOES NOT** activate a platform login account. The staff member does NOT exist in the `users` table and CANNOT authenticate via `/api/v1/auth/login`. Any login attempt returns `401 Unauthorized`.
 
-### Stage 7: Explicit Account Activation (Separate Workflow)
+### Stage 7: Explicit Account Activation (Rollout Controlled)
 If and when the verified employee is granted active access to the web or mobile platform:
-1. An authorized administrator explicitly calls `/api/v1/ph/pending-staff/{id}/activate-account` or provisions credentials via user administration.
-2. A canonical `User` record is created with secure password hashing (`Argon2id`), verified corporate email, and assigned roles.
-3. The `PendingStaffProfile` status transitions to `ACCOUNT_ACTIVATED`.
-4. Only after this explicit step can the staff member authenticate and log in.
+1. **Safety Rollout Control (`CRBCL_PH_STAFF_ACTIVATION_ENABLED=false`):**
+   - In accordance with CRBCL Phase 2 security policy, account activation is **disabled by default**.
+   - Calling `/api/v1/ph/pending-staff/{id}/activate-account` returns `HTTP 403 Forbidden` ("Account activation for Prevention & Healing staff is currently disabled by administrative policy").
+   - The UI displays an amber policy notice and disables activation buttons until administrative rollout authorization.
+2. **Future Production Credential Provisioning:**
+   - In production, administrator-entered passwords will NOT be used to provision employee accounts, eliminating credential exposure risk.
+   - Instead, the platform will leverage an automated self-service invitation workflow:
+     - The system sends a cryptographically signed, expiring, one-time invitation link to the staff member's verified corporate email (`@crbcl.ca`).
+     - The staff member clicks the link, confirms their identity, and establishes their own private password complying with CRBCL password complexity standards.
+3. When activated under authorized release:
+   - A canonical `User` record is created with secure password hashing (`Argon2id`), verified corporate email, and assigned roles.
+   - The `PendingStaffProfile` status transitions to `ACCOUNT_ACTIVATED`.
+   - Only after this explicit step can the staff member authenticate and log in.
 
 ---
 

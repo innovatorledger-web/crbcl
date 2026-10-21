@@ -46,8 +46,9 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -59,6 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import openpyxl
 
 from app.auth.security import hash_password
+from app.core import get_settings
 from app.core.database import get_db
 from app.models.org_ops import Employee
 from app.models.person import Person
@@ -710,6 +712,16 @@ async def activate_staff_account(
     current_user: User = Depends(require_permission(Permissions.PH_STAFF_ONBOARD_MANAGE)),
 ):
     """Explicitly activate an authentication-enabled login User account for a verified staff member."""
+    settings = get_settings()
+    if not settings.crbcl_ph_staff_activation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Staff account activation is disabled by administrative policy (CRBCL_PH_STAFF_ACTIVATION_ENABLED=false). "
+                "Employee profiles remain in 'VERIFIED_PENDING_ACCOUNT' status without login credentials until secure invitation rollout is authorized."
+            ),
+        )
+
     row = await db.get(PendingStaffProfile, profile_id)
     if not row:
         raise _not_found("Pending staff profile", profile_id)
@@ -756,6 +768,7 @@ async def activate_staff_account(
 
 def _serialize_ps(r: PendingStaffProfile) -> dict:
     is_account_active = (r.onboarding_status == "ACCOUNT_ACTIVATED")
+    settings = get_settings()
     return {
         "id": str(r.id),
         "first_name": r.first_name,
@@ -769,6 +782,7 @@ def _serialize_ps(r: PendingStaffProfile) -> dict:
         "employee_id": str(r.employee_id) if r.employee_id else None,
         "has_login_account": is_account_active,
         "can_authenticate": is_account_active,
+        "activation_enabled": settings.crbcl_ph_staff_activation_enabled,
         "notes": r.notes,
         "source_batch_id": str(r.source_batch_id) if r.source_batch_id else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -845,18 +859,60 @@ async def confirm_client_ref(
     ref_id: uuid.UUID,
     body: ClientRefConfirmIn,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
+    current_user: User = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
 ):
     row = await db.get(PHClientRef, ref_id)
     if not row:
         raise _not_found("Client reference", ref_id)
+
+    # 1. Idempotency safeguard: re-confirming identical link returns successfully
+    if row.status == "CONFIRMED" and row.person_id == body.person_id:
+        return _serialize_cr(row)
+
+    # 2. Conflict safeguard: cannot re-link an already confirmed reference to a different Person
+    if row.status == "CONFIRMED" and row.person_id is not None and row.person_id != body.person_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Conflict detected: Client reference '{row.legacy_id}' is already confirmed to canonical "
+                f"Person {row.person_id}. Cannot re-link to Person {body.person_id} without administrative review."
+            ),
+        )
+
+    # 3. Canonical Person verification & 10-digit permanent ID validation
     person = await db.get(Person, body.person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Canonical Person not found")
+    pid_num = (person.person_id_number or "").strip()
+    if not pid_num or len(pid_num) != 10 or not pid_num.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid canonical Person ID '{pid_num}'. CRBCL permanent Person ID must be exactly 10 numeric digits."
+        )
+
+    # 4. Cross-record collision detection in Family Support
+    q_conflicts = select(FamilySupportRecord).where(
+        FamilySupportRecord.client_ref_legacy_id == row.legacy_id,
+        FamilySupportRecord.person_id.is_not(None),
+        FamilySupportRecord.person_id != body.person_id,
+    )
+    res_conflicts = await db.execute(q_conflicts)
+    conflicting_records = res_conflicts.scalars().all()
+    if conflicting_records:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Conflict detected: {len(conflicting_records)} Family Support record(s) with reference "
+                f"'{row.legacy_id}' are already linked to a different canonical Person. Automatic linking aborted."
+            ),
+        )
+
     row.person_id = body.person_id
     row.status = "CONFIRMED"
-    row.confirmed_at = datetime.utcnow()
-    # Cascade to FamilySupportRecord
+    row.confirmed_by_id = current_user.id
+    row.confirmed_at = datetime.now(UTC)
+
+    # Cascade to FamilySupportRecord scoped strictly to this legacy reference
     await db.execute(
         update(FamilySupportRecord)
         .where(FamilySupportRecord.client_ref_legacy_id == row.legacy_id)
@@ -871,12 +927,14 @@ async def confirm_client_ref(
 async def reject_client_ref(
     ref_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
+    current_user: User = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
 ):
     row = await db.get(PHClientRef, ref_id)
     if not row:
         raise _not_found("Client reference", ref_id)
     row.status = "REJECTED"
+    row.confirmed_by_id = current_user.id
+    row.confirmed_at = datetime.now(UTC)
     await db.execute(
         update(FamilySupportRecord)
         .where(FamilySupportRecord.client_ref_legacy_id == row.legacy_id)
@@ -892,7 +950,7 @@ async def reconcile_client_ref(
     ref_id: uuid.UUID,
     body: ClientRefReconcileIn,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
+    current_user: User = Depends(require_permission(Permissions.PH_CLIENT_RECONCILE)),
 ):
     row = await db.get(PHClientRef, ref_id)
     if not row:
@@ -902,12 +960,53 @@ async def reconcile_client_ref(
     if action == "CONFIRM":
         if not body.person_id:
             raise HTTPException(status_code=400, detail="person_id is required to confirm a client reference.")
+
+        # Idempotency check
+        if row.status == "CONFIRMED" and row.person_id == body.person_id:
+            return _serialize_cr(row)
+
+        # Conflict check
+        if row.status == "CONFIRMED" and row.person_id is not None and row.person_id != body.person_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Conflict detected: Client reference '{row.legacy_id}' is already confirmed to canonical "
+                    f"Person {row.person_id}. Cannot link to Person {body.person_id} without administrative review."
+                ),
+            )
+
         person = await db.get(Person, body.person_id)
         if not person:
             raise HTTPException(status_code=404, detail=f"Canonical Person {body.person_id} not found.")
+
+        pid_num = (person.person_id_number or "").strip()
+        if not pid_num or len(pid_num) != 10 or not pid_num.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid canonical Person ID '{pid_num}'. CRBCL permanent Person ID must be exactly 10 numeric digits."
+            )
+
+        # Collision detection in Family Support records
+        q_conflicts = select(FamilySupportRecord).where(
+            FamilySupportRecord.client_ref_legacy_id == row.legacy_id,
+            FamilySupportRecord.person_id.is_not(None),
+            FamilySupportRecord.person_id != body.person_id,
+        )
+        res_conflicts = await db.execute(q_conflicts)
+        conflicting_records = res_conflicts.scalars().all()
+        if conflicting_records:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Conflict detected: {len(conflicting_records)} Family Support record(s) for reference "
+                    f"'{row.legacy_id}' are already linked to a different canonical Person. Linking aborted."
+                ),
+            )
+
         row.person_id = body.person_id
         row.status = "CONFIRMED"
-        row.confirmed_at = datetime.utcnow()
+        row.confirmed_by_id = current_user.id
+        row.confirmed_at = datetime.now(UTC)
         await db.execute(
             update(FamilySupportRecord)
             .where(FamilySupportRecord.client_ref_legacy_id == row.legacy_id)
@@ -915,6 +1014,8 @@ async def reconcile_client_ref(
         )
     elif action == "REJECT":
         row.status = "REJECTED"
+        row.confirmed_by_id = current_user.id
+        row.confirmed_at = datetime.now(UTC)
         await db.execute(
             update(FamilySupportRecord)
             .where(FamilySupportRecord.client_ref_legacy_id == row.legacy_id)
@@ -1031,6 +1132,11 @@ async def cancel_import(
             detail=f"Batch is in status {batch.status!r} — cannot cancel an already completed or running import."
         )
     batch.status = "CANCELLED"
+    await db.execute(
+        update(PHImportRow)
+        .where(PHImportRow.batch_id == batch_id, PHImportRow.status.in_(["PENDING", "VALID"]))
+        .values(status="CANCELLED")
+    )
     await db.commit()
     await db.refresh(batch)
     return _serialize_batch(batch)
@@ -1089,6 +1195,24 @@ async def analyze_import(
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # Duplicate workbook upload check via cryptographic content hash
+    file_hash = hashlib.sha256(contents).hexdigest()
+    res_dup = await db.execute(
+        select(PHImportBatch).where(
+            PHImportBatch.file_hash == file_hash,
+            PHImportBatch.status.in_(["COMPLETED", "APPROVED", "IMPORTING"]),
+        )
+    )
+    dup = res_dup.scalars().first()
+    if dup:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Duplicate workbook upload detected: This file content has already been processed in batch {dup.id} "
+                f"(status: {dup.status}). Re-uploading identical historical files is prohibited."
+            ),
+        )
+
     try:
         wb = openpyxl.load_workbook(BytesIO(contents), data_only=True)
     except Exception as e:
@@ -1125,6 +1249,7 @@ async def analyze_import(
         uploaded_by_id=current_user.id,
         original_filename=file.filename or "upload.xlsx",
         worksheet_name=sheet_name,
+        file_hash=file_hash,
         record_type=record_type,
         status="AWAITING_APPROVAL",
     )
@@ -1583,6 +1708,17 @@ async def execute_import(
     current_user: User = Depends(require_permission(Permissions.PH_IMPORT_EXECUTE)),
 ):
     """Step 8: Execute approved import in a single atomic transaction."""
+    settings = get_settings()
+    if not settings.crbcl_ph_real_import_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Historical workbook import execution into the database is disabled by administrative policy "
+                "(CRBCL_PH_REAL_IMPORT_ENABLED=false). Workbook inspection and structural validation are permitted, "
+                "but execution of records is strictly prohibited until authorized release."
+            ),
+        )
+
     batch = await db.get(PHImportBatch, batch_id)
     if not batch:
         raise _not_found("Import batch", batch_id)
@@ -1724,17 +1860,20 @@ async def execute_import(
 
 
 def _serialize_batch(r: PHImportBatch) -> dict:
+    settings = get_settings()
     return {
         "id": str(r.id),
         "uploaded_by_id": str(r.uploaded_by_id),
         "original_filename": r.original_filename,
         "worksheet_name": r.worksheet_name,
+        "file_hash": r.file_hash,
         "record_type": r.record_type,
         "total_rows_analyzed": r.total_rows_analyzed,
         "valid_rows": r.valid_rows,
         "invalid_rows": r.invalid_rows,
         "imported_rows": r.imported_rows,
         "status": r.status,
+        "real_import_enabled": settings.crbcl_ph_real_import_enabled,
         "approved_by_id": str(r.approved_by_id) if r.approved_by_id else None,
         "approved_at": r.approved_at.isoformat() if r.approved_at else None,
         "completed_at": r.completed_at.isoformat() if r.completed_at else None,

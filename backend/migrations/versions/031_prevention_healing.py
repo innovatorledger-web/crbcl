@@ -37,6 +37,7 @@ def upgrade() -> None:
         sa.Column("uploaded_by_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("original_filename", sa.String(500), nullable=False),
         sa.Column("worksheet_name", sa.String(200), nullable=False),
+        sa.Column("file_hash", sa.String(64), nullable=True),
         sa.Column("record_type", sa.String(50), nullable=False),
         sa.Column("total_rows_analyzed", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("valid_rows", sa.Integer(), nullable=False, server_default="0"),
@@ -52,6 +53,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_ph_import_batches_status", "ph_import_batches", ["status"])
     op.create_index("ix_ph_import_batches_uploaded_by", "ph_import_batches", ["uploaded_by_id"])
+    op.create_index("ix_ph_import_batches_file_hash", "ph_import_batches", ["file_hash"])
 
     # ── ph_pending_staff_profiles ─────────────────────────────────────────────
     op.create_table(

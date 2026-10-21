@@ -110,6 +110,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("crbcl_offline_web_enabled", "CRBCL_OFFLINE_WEB_ENABLED"),
         description="Master feature flag for web offline workspace and synchronization. Disabled by default.",
     )
+    crbcl_ph_staff_activation_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("crbcl_ph_staff_activation_enabled", "CRBCL_PH_STAFF_ACTIVATION_ENABLED"),
+        description="Master rollout control for Prevention & Healing staff account activation. Disabled by default.",
+    )
+    crbcl_ph_real_import_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("crbcl_ph_real_import_enabled", "CRBCL_PH_REAL_IMPORT_ENABLED"),
+        description="Master rollout control for Prevention & Healing real historical workbook import execution. Disabled by default.",
+    )
 
     # ── Derived helpers ──────────────────────────────────────
     @property
