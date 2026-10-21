@@ -38,7 +38,7 @@
    - **Enhancement Programs Tab:** Filterable list, demographic badges, financial codes, and dialog for logging new programs.
    - **Family Support Services Tab:** Filterable service logs, RedMane ID quarantine badges, and service entry dialog.
    - **Other Nations Support Tab:** Eagle Nest off-reserve entries, Cowessess connection tags, and support dialog.
-   - **Inactive Staff Onboarding Tab:** Quarantines unverified employees; includes *"Verify & Activate"* modal to link verified CRBCL emails and promote to active Employee accounts.
+   - **Inactive Staff Onboarding Tab:** Quarantines unverified employees; provides *"Verify & Link Profile"* modal (creates/links canonical `Employee` record and sets status to `VERIFIED_PENDING_ACCOUNT` without granting login privileges) and explicit *"Activate Login Account"* action (creates `User` login credentials and sets status to `ACCOUNT_ACTIVATED`).
    - **Client Reconciliation Queue Tab:** Displays unresolved RedMane IDs, live canonical Person lookup (`Person.person_id_number`), and link confirmation.
    - **Safe 8-Step Excel Import Wizard Tab:** Drag-and-drop workbook upload, sheet selector, validation preview, approval modal, and batch audit log.
    - **Annual Summary & Audit Tab:** Comprehensive financial and demographic reporting matching the Excel Annual Summary sheet, with print/export capabilities.

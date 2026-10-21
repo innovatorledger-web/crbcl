@@ -293,32 +293,32 @@ export default function PreventionHealingWorkspace() {
     }
   };
 
-  // Staff Activation
+  // Staff Verification & Linking (Does not activate login account)
   const handleActivateStaff = async () => {
     if (!staffEmail || !staffEmail.includes("@")) {
       toast({
         title: "Invalid Email",
-        description: "A valid verified email address is required to activate an employee profile.",
+        description: "A valid verified email address is required to verify an employee profile.",
         variant: "destructive",
       });
       return;
     }
     setActivatingStaff(true);
     try {
-      await preventionHealingApi.activatePendingStaff(selectedStaff.id, {
+      await preventionHealingApi.verifyPendingStaff(selectedStaff.id, {
         email: staffEmail,
         position: staffPosition || selectedStaff.position,
       });
       toast({
-        title: "Staff Activated",
-        description: `${selectedStaff.display_name_from_excel} has been promoted to active Employee. All historical records linked automatically.`,
+        title: "Staff Profile Verified & Linked",
+        description: `${selectedStaff.display_name_from_excel} verified and linked to Employee profile. Login user account remains inactive.`,
       });
       setActivateStaffModalOpen(false);
       loadWorkspaceData();
     } catch (err) {
       toast({
-        title: "Activation Error",
-        description: err.message || "Could not activate staff profile.",
+        title: "Verification Error",
+        description: err.message || "Could not verify staff profile.",
         variant: "destructive",
       });
     } finally {
@@ -1310,18 +1310,22 @@ export default function PreventionHealingWorkspace() {
                           )}
                         </td>
                         <td className="p-3">
-                          {s.onboarding_status === "ACTIVATED" ? (
+                          {s.onboarding_status === "ACCOUNT_ACTIVATED" ? (
                             <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50">
-                              ✓ Activated Employee
+                              ✓ Active Login Account
+                            </Badge>
+                          ) : s.onboarding_status === "VERIFIED_PENDING_ACCOUNT" || s.onboarding_status === "ACTIVATED" ? (
+                            <Badge variant="outline" className="text-[10px] text-blue-700 border-blue-200 bg-blue-50">
+                              ✓ Verified Profile (No Login)
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-200 bg-amber-50">
-                              Inactive (Pending)
+                              Pending Verification (No Login)
                             </Badge>
                           )}
                         </td>
                         <td className="p-3 text-right">
-                          {s.onboarding_status !== "ACTIVATED" ? (
+                          {s.onboarding_status !== "ACCOUNT_ACTIVATED" && s.onboarding_status !== "VERIFIED_PENDING_ACCOUNT" && s.onboarding_status !== "ACTIVATED" ? (
                             <Button
                               size="sm"
                               onClick={() => {
@@ -1333,10 +1337,10 @@ export default function PreventionHealingWorkspace() {
                               className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white gap-1"
                             >
                               <UserPlus className="w-3.5 h-3.5" />
-                              Verify & Activate
+                              Verify & Link Profile
                             </Button>
                           ) : (
-                            <span className="text-xs text-muted-foreground">Active</span>
+                            <span className="text-xs text-muted-foreground">Profile Verified</span>
                           )}
                         </td>
                       </tr>
@@ -2343,17 +2347,20 @@ export default function PreventionHealingWorkspace() {
       </Dialog>
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* DIALOG: VERIFY & ACTIVATE INACTIVE STAFF */}
+      {/* DIALOG: VERIFY & LINK INACTIVE STAFF */}
       {/* ───────────────────────────────────────────────────────────── */}
       <Dialog open={activateStaffModalOpen} onOpenChange={setActivateStaffModalOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-amber-600" />
-              Verify & Activate Staff Member
+              Verify & Link Staff Member
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Promotes an unverified employee detected from the Excel records to an active Employee. All historical program records will link immediately.
+              Verifies the employee's work email and position, creating or linking their canonical Employee record and associating historical records.
+              <span className="block mt-1 text-amber-800 font-medium">
+                Note: This verifies the employment profile and DOES NOT activate a login account. Login credentials remain inactive until separately provisioned.
+              </span>
             </DialogDescription>
           </DialogHeader>
 
@@ -2408,7 +2415,7 @@ export default function PreventionHealingWorkspace() {
                   className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {activatingStaff ? "Activating..." : "Confirm & Activate Account"}
+                  {activatingStaff ? "Verifying..." : "Confirm & Link Profile"}
                 </Button>
               </DialogFooter>
             </div>

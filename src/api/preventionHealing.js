@@ -82,8 +82,17 @@ export const preventionHealingApi = {
     return await api.put(`/ph/pending-staff/${id}`, data);
   },
 
+  verifyPendingStaff: async (id, data) => {
+    return await api.post(`/ph/pending-staff/${id}/verify-and-link`, data);
+  },
+
   activatePendingStaff: async (id, data) => {
-    return await api.post(`/ph/pending-staff/${id}/activate`, data);
+    // Backward-compatible alias for verify-and-link
+    return await api.post(`/ph/pending-staff/${id}/verify-and-link`, data);
+  },
+
+  activateStaffAccount: async (id, data) => {
+    return await api.post(`/ph/pending-staff/${id}/activate-account`, data);
   },
 
   // ── Client Reconciliation ──

@@ -243,16 +243,18 @@ async def test_staff_onboarding_inactive_and_activation_workflow(
     assert fail_act.status_code == 400
     assert "email" in fail_act.text.lower()
 
-    # 4. Activate WITH verified email
+    # 4. Verify & Link WITH verified email (Creates Employee profile, links historical records, but DOES NOT create login account)
     act_res = await client.post(
-        f"/api/v1/ph/pending-staff/{profile_id}/activate",
+        f"/api/v1/ph/pending-staff/{profile_id}/verify-and-link",
         json={"email": "valerie.standingready@crbcl.ca", "position": "Prevention Worker"},
         headers=headers,
     )
     assert act_res.status_code == 200
-    activated_data = act_res.json()
-    assert activated_data["onboarding_status"] == "ACTIVATED"
-    assert activated_data["employee_id"] is not None
+    verified_data = act_res.json()
+    assert verified_data["onboarding_status"] == "VERIFIED_PENDING_ACCOUNT"
+    assert verified_data["employee_id"] is not None
+    assert verified_data["has_login_account"] is False
+    assert verified_data["can_authenticate"] is False
 
     # 5. Verify Employee record was created in employees table
     emp_res = await db_session.execute(select(Employee).where(Employee.email == "valerie.standingready@crbcl.ca"))
@@ -265,6 +267,34 @@ async def test_staff_onboarding_inactive_and_activation_workflow(
     # 6. Verify historical EnhancementProgram now links to new Employee
     await db_session.refresh(ep)
     assert ep.employee_id == emp.id
+
+    # 7. CRITICAL SECURITY CHECK: Verify that verified employee CANNOT authenticate / log in
+    login_attempt = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "valerie.standingready@crbcl.ca", "password": "RandomPassword123!"},
+    )
+    assert login_attempt.status_code == 401
+    assert "invalid" in login_attempt.text.lower()
+
+    # 8. Separate Account Activation: Admin explicitly provisions a login account
+    acc_act = await client.post(
+        f"/api/v1/ph/pending-staff/{profile_id}/activate-account",
+        json={"password": "VerifiedPassword2026!"},
+        headers=headers,
+    )
+    assert acc_act.status_code == 200
+    acc_data = acc_act.json()
+    assert acc_data["onboarding_status"] == "ACCOUNT_ACTIVATED"
+    assert acc_data["has_login_account"] is True
+    assert acc_data["can_authenticate"] is True
+
+    # 9. Now employee CAN authenticate with their newly provisioned credentials
+    login_success = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "valerie.standingready@crbcl.ca", "password": "VerifiedPassword2026!"},
+    )
+    assert login_success.status_code == 200
+    assert "user" in login_success.json()
 
 
 @pytest.mark.asyncio

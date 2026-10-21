@@ -23,6 +23,11 @@ CRBCL maintains historical Prevention & Healing operations across two primary Ex
    - **Worksheets:**
      - `Sheet1` (Eagle Nest / Other Nations operational tracking for off-reserve and non-Cowessess indigenous community members)
 
+3. **Case Note Example Workbook Status (Audited Absence):**
+   - A comprehensive automated search across `C:\Users\Shilley Pc\Downloads`, `Desktop`, `Documents`, and the repository confirmed that **no separate Case Note example workbook exists on the local filesystem**.
+   - Only the two workbooks above are present.
+   - Case Note integration architecture and privacy safeguards were derived directly from the platform's canonical Case Note implementation (`backend/app/models/case_note.py`, `backend/app/api/v1/case_notes.py`) and prompt requirements.
+
 ---
 
 ## 2. Employee Email Address Finding (Crucial Verification)
@@ -41,7 +46,9 @@ CRBCL maintains historical Prevention & Healing operations across two primary Ex
   - NO phone numbers or contact details.
   - NO unique employee system identifiers.
 
-**Architectural Implication:** Under CRBCL platform security standards, user authentication requires a verified corporate email address and role assignment. Fake or default emails must never be created. Unverified staff identified from historical spreadsheets are placed into a pending onboarding state (`PendingStaffProfile`) until corporate contact verification is performed by an authorized administrator.
+**Architectural Implication:** Under CRBCL platform security standards, user authentication requires a verified corporate email address and role assignment. Fake or default emails must never be created. Unverified staff identified from historical spreadsheets are placed into a pending onboarding state (`PendingStaffProfile`).
+- **Profile Verification (`VERIFIED_PENDING_ACCOUNT`):** Verifies the staff member's work email and links or creates an `Employee` HR record. **Strictly DOES NOT create a login user account or permit authentication.**
+- **Account Activation (`ACCOUNT_ACTIVATED`):** A separate explicit administrative action that provisions login credentials (`User` record) and enables platform authentication.
 
 ---
 

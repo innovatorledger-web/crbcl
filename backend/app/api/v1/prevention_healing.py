@@ -58,6 +58,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 import openpyxl
 
+from app.auth.security import hash_password
 from app.core.database import get_db
 from app.models.org_ops import Employee
 from app.models.person import Person
@@ -612,13 +613,24 @@ class PendingStaffActivateIn(BaseModel):
     department: str = "Prevention & Healing"
 
 
+class StaffAccountActivateIn(BaseModel):
+    password: str
+
+
+@router.post("/pending-staff/{profile_id}/verify-and-link")
 @router.post("/pending-staff/{profile_id}/activate")
-async def activate_pending_staff(
+async def verify_and_link_staff(
     profile_id: uuid.UUID,
     body: PendingStaffActivateIn | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permissions.PH_STAFF_ONBOARD_MANAGE)),
 ):
+    """Verify an employee's contact details and link historical records.
+    
+    IMPORTANT: This creates or matches an Employee record and links historical
+    prevention records. It strictly DOES NOT create a login User account.
+    Staff members cannot authenticate until an account is separately activated.
+    """
     row = await db.get(PendingStaffProfile, profile_id)
     if not row:
         raise _not_found("Pending staff profile", profile_id)
@@ -627,7 +639,7 @@ async def activate_pending_staff(
     if not email or not email.strip() or "@" not in email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A verified email address is strictly required to activate an employee profile. Inactive profiles remain pending until verified."
+            detail="A verified email address is strictly required to verify an employee profile. Inactive profiles remain pending until verified."
         )
     email = email.strip().lower()
 
@@ -666,7 +678,7 @@ async def activate_pending_staff(
 
     row.email = email
     row.employee_id = existing_emp.id
-    row.onboarding_status = "ACTIVATED"
+    row.onboarding_status = "VERIFIED_PENDING_ACCOUNT"
 
     # Link historical records associated with this pending staff profile
     await db.execute(
@@ -690,7 +702,60 @@ async def activate_pending_staff(
     return _serialize_ps(row)
 
 
+@router.post("/pending-staff/{profile_id}/activate-account")
+async def activate_staff_account(
+    profile_id: uuid.UUID,
+    body: StaffAccountActivateIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permissions.PH_STAFF_ONBOARD_MANAGE)),
+):
+    """Explicitly activate an authentication-enabled login User account for a verified staff member."""
+    row = await db.get(PendingStaffProfile, profile_id)
+    if not row:
+        raise _not_found("Pending staff profile", profile_id)
+
+    if not row.email:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot activate a login account without a verified email address. Complete employee verification first."
+        )
+
+    normalized_email = row.email.strip().lower()
+    res_u = await db.execute(select(User).where(User.email_normalized == normalized_email))
+    user = res_u.scalars().first()
+
+    if not user:
+        if not body.password or len(body.password) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail="Password must be at least 8 characters long to activate account."
+            )
+        user = User(
+            email=row.email,
+            email_normalized=normalized_email,
+            password_hash=hash_password(body.password),
+            full_name=f"{row.first_name} {row.last_name}",
+            display_name=f"{row.first_name} {row.last_name}",
+            department=row.department or "Prevention & Healing",
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(user)
+        await db.flush()
+    else:
+        user.is_active = True
+        user.is_verified = True
+        if body.password:
+            user.password_hash = hash_password(body.password)
+
+    row.onboarding_status = "ACCOUNT_ACTIVATED"
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_ps(row)
+
+
 def _serialize_ps(r: PendingStaffProfile) -> dict:
+    is_account_active = (r.onboarding_status == "ACCOUNT_ACTIVATED")
     return {
         "id": str(r.id),
         "first_name": r.first_name,
@@ -702,6 +767,8 @@ def _serialize_ps(r: PendingStaffProfile) -> dict:
         "phone": r.phone,
         "onboarding_status": r.onboarding_status,
         "employee_id": str(r.employee_id) if r.employee_id else None,
+        "has_login_account": is_account_active,
+        "can_authenticate": is_account_active,
         "notes": r.notes,
         "source_batch_id": str(r.source_batch_id) if r.source_batch_id else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,

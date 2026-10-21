@@ -55,14 +55,18 @@ Before executing the historical Excel data import or enabling production workflo
 - [x] Schema models defined and reviewed.
 - [x] Additive migration (`031_prevention_healing.py`) created.
 - [x] Inactive staff onboarding lifecycle implemented and tested.
+- [x] Pending staff confirmed unable to authenticate (401 Unauthorized enforced).
+- [x] Staff profile verification (`VERIFIED_PENDING_ACCOUNT`) strictly separated from login account activation (`ACCOUNT_ACTIVATED`).
+- [x] Case Note example workbook status audited: confirmed absent from filesystem; integration aligned directly with platform Case Note models.
 - [x] Person search and legacy ID reconciliation implemented and tested.
 - [x] Decimal-safe financial calculations verified.
 - [x] 8-step import wizard built with row error isolation and batch cancellation.
 - [x] Confidential Case Notes kept segregated from financial operational logs.
 - [x] Zero existing test accounts or test records deleted or modified.
-- [x] Automated pytest and regression suites passed (100%).
+- [x] Automated pytest and regression suites passed (100% - 8/8 new, 15/15 regression).
+- [x] Frontend production build completed cleanly (`npm run build` / `vite build` 0 errors).
 - [ ] CRBCL Leadership approves the 5 Outstanding Governance Decisions.
 - [ ] Staging deployment: Execute Alembic migration `031_prevention_healing.py` on staging DB.
 - [ ] Authorized supervisor executes trial import of historical workbooks in staging environment.
-- [ ] HR/Admin verifies and activates real Prevention & Healing staff profiles with verified corporate emails.
+- [ ] HR/Admin verifies real Prevention & Healing staff profiles and links canonical records.
 - [ ] Final signoff: CRBCL Executive Director authorizes live production import.
