@@ -542,6 +542,19 @@ PERMISSIONS_DATA = [
     {"key": Permissions.FLEET_KEY_MANAGE, "name": "Manage Key Pickup, Return & Custody Accountability", "category": "fleet"},
     {"key": Permissions.ROOM_BOOKING_MANAGE, "name": "Manage Meeting & Room Bookings", "category": "operations"},
     {"key": Permissions.SUPPLY_INVENTORY_MANAGE, "name": "Manage Office Supplies & Operational Inventory", "category": "operations"},
+    {"key": Permissions.PH_RECORD_READ, "name": "Read Prevention & Healing Records", "category": "prevention_healing"},
+    {"key": Permissions.PH_RECORD_CREATE, "name": "Create Prevention & Healing Records", "category": "prevention_healing"},
+    {"key": Permissions.PH_RECORD_UPDATE, "name": "Update Prevention & Healing Records", "category": "prevention_healing"},
+    {"key": Permissions.PH_RECORD_DELETE, "name": "Delete Prevention & Healing Records", "category": "prevention_healing"},
+    {"key": Permissions.PH_REPORT_READ, "name": "Read Prevention & Healing Summary Reports", "category": "prevention_healing"},
+    {"key": Permissions.PH_REPORT_EXPORT, "name": "Export Prevention & Healing Reports", "category": "prevention_healing"},
+    {"key": Permissions.PH_IMPORT_UPLOAD, "name": "Upload & Analyze Prevention & Healing Workbooks", "category": "prevention_healing"},
+    {"key": Permissions.PH_IMPORT_APPROVE, "name": "Approve Prevention & Healing Import Batches", "category": "prevention_healing"},
+    {"key": Permissions.PH_IMPORT_EXECUTE, "name": "Execute Prevention & Healing Import Batches", "category": "prevention_healing"},
+    {"key": Permissions.PH_IMPORT_HISTORY_READ, "name": "View Prevention & Healing Import History", "category": "prevention_healing"},
+    {"key": Permissions.PH_STAFF_ONBOARD_READ, "name": "Read Pending Staff Onboarding Profiles", "category": "prevention_healing"},
+    {"key": Permissions.PH_STAFF_ONBOARD_MANAGE, "name": "Manage Pending Staff Onboarding & Account Activation", "category": "prevention_healing"},
+    {"key": Permissions.PH_CLIENT_RECONCILE, "name": "Reconcile Historical Client References to Canonical Person Records", "category": "prevention_healing"},
 ]
 
 # ── 3. Role-Permission Mappings ──────────────────────────────

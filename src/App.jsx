@@ -267,6 +267,7 @@ const AuthenticatedApp = () => {
             <Route path="/ask-red-bear" element={<AskRedBear />} />
             <Route path="/teams" element={<Teams />} />
             <Route path="/teams/:id" element={<TeamDashboard />} />
+            <Route path="/prevention-healing" element={<Navigate to="/teams/3" replace />} />
             <Route path="/offline-workspace" element={<OfflineWorkspace />} />
           </Route>
         </Route>

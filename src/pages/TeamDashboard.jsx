@@ -6,6 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import PageHeader from "@/components/shared/PageHeader";
 import StatusBadge from "@/components/shared/StatusBadge";
 import StatCard from "@/components/shared/StatCard";
+import PreventionHealingWorkspace from "@/components/prevention_healing/PreventionHealingWorkspace";
 import { TEAMS } from "./Teams";
 
 const CHART_COLORS = ["hsl(4,60%,38%)", "hsl(36,70%,52%)", "hsl(152,45%,35%)", "hsl(220,50%,45%)", "hsl(280,45%,45%)"];
@@ -178,6 +179,19 @@ export default function TeamDashboard() {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (teamId === 3) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Link to="/teams" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors">
+            <ChevronLeft className="w-4 h-4" /> All Teams
+          </Link>
+        </div>
+        <PreventionHealingWorkspace />
       </div>
     );
   }

@@ -9,7 +9,7 @@ import {
   AlertCircle, Building2, ShieldAlert, Activity, XCircle, AlertTriangle,
   Download, LayoutDashboard, ArrowRight, ConciergeBell,
   Compass, Inbox, UserCog, FolderOpen, Heart, DollarSign, BarChart3,
-  CheckSquare, Truck, Home, LayoutGrid
+  CheckSquare, Truck, Home, LayoutGrid, Sparkles
 } from "lucide-react";
 import {
   Dialog,
@@ -45,6 +45,14 @@ const ALL_STAFF_DASHBOARDS = [
     description: "Centralized operational request queue, advance vehicle reservations, key custody tracking, room scheduling, and supply inventory.",
     icon: Building2,
     badge: "Operational Access Active",
+  },
+  {
+    name: "Prevention & Healing Records Workspace",
+    route: "/teams/3",
+    category: "Prevention & Healing",
+    description: "Enhancement programs, direct family support, Eagle Nest other nations records, inactive staff onboarding, client ID reconciliation, and controlled financial reports.",
+    icon: Sparkles,
+    badge: "Specialized Records Workspace",
   },
   {
     name: "Staff Dashboard",

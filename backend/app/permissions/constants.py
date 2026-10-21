@@ -389,3 +389,18 @@ class Permissions(StrEnum):
     ROOM_BOOKING_MANAGE = "room.booking.manage"
     SUPPLY_INVENTORY_MANAGE = "supply.inventory.manage"
 
+    # Prevention & Healing Workspace
+    PH_RECORD_READ = "ph.record.read"
+    PH_RECORD_CREATE = "ph.record.create"
+    PH_RECORD_UPDATE = "ph.record.update"
+    PH_RECORD_DELETE = "ph.record.delete"
+    PH_REPORT_READ = "ph.report.read"
+    PH_REPORT_EXPORT = "ph.report.export"
+    PH_IMPORT_UPLOAD = "ph.import.upload"
+    PH_IMPORT_APPROVE = "ph.import.approve"
+    PH_IMPORT_EXECUTE = "ph.import.execute"
+    PH_IMPORT_HISTORY_READ = "ph.import.history.read"
+    PH_STAFF_ONBOARD_READ = "ph.staff.onboard.read"
+    PH_STAFF_ONBOARD_MANAGE = "ph.staff.onboard.manage"
+    PH_CLIENT_RECONCILE = "ph.client.reconcile"
+
