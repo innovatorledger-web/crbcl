@@ -9,11 +9,23 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, MetaData, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core.config import get_settings
+
+
+# Register SQLite compilation handlers for PostgreSQL types in local staging/test
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
 
 # ── Naming convention for constraints ────────────────────────
 convention = {
