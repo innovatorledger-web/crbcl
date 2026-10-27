@@ -1,9 +1,13 @@
 """CRBCL Platform — Dedicated Staging Synthetic Test Data Seeder.
 
-Creates a completely isolated synthetic data environment for Phase 3 testing:
+Creates a completely isolated synthetic data environment for Phase 4 verification:
+- Strict authorization safeguards (refuses to run unless CRBCL_ALLOW_SYNTHETIC_SEEDING=true)
+- Database destination guards (rejects production URLs, railway, genserver, and live databases)
+- Secure credential management (never hardcoded, loads from CRBCL_SYNTHETIC_TEST_PASSWORD or generates cryptographically strong secret)
+- Protection of existing accounts (never overwrites or resets existing test/admin accounts)
 - Canonical Persons with valid 10-digit numeric person_id_numbers
-- Canonical Client and Case records
-- Prevention & Healing pending staff profiles (without emails)
+- Unmistakably fictional synthetic identities (zero real personal names or real community data)
+- Inactive Prevention & Healing pending staff profiles (without emails)
 - Verified employees without login accounts (VERIFIED_PENDING_ACCOUNT)
 - Synthetic Enhancement Programs with exact Decimal expenses
 - Synthetic Family Support records with legacy RedMane IDs
@@ -17,10 +21,14 @@ CRITICAL: ZERO real historical records or real confidential names are used.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import secrets
 import uuid
 from datetime import date, datetime, UTC
 from decimal import Decimal
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,15 +49,124 @@ from app.models.prevention_healing import (
 )
 from app.models.role import Permission, Role, RolePermission, UserRole
 from app.models.team import Team, TeamMembership
-from app.models.user import User
+from app.models.user import User, UserPreference
 from app.permissions.constants import Permissions
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("crbcl.seed.staging")
 
+PROHIBITED_HOST_PATTERNS = [
+    "railway.app",
+    "up.railway.app",
+    "rlwy.net",
+    "genserver.online",
+    "production",
+    "crbcl-production",
+    "live",
+]
+
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "test",
+    "staging-db",
+    "host.docker.internal",
+]
+
+
+def verify_safe_seeding_environment(settings, test_password: str | None = None) -> None:
+    """Rigorous verification that synthetic seeding is explicitly authorized and safe."""
+    # 1. Refuse without explicit authorization flag
+    is_auth = (
+        getattr(settings, "crbcl_allow_synthetic_seeding", False)
+        or os.environ.get("CRBCL_ALLOW_SYNTHETIC_SEEDING", "").lower() == "true"
+    )
+    if not is_auth:
+        raise RuntimeError(
+            "CRITICAL SECURITY REJECTION: Synthetic seeding is disabled by default. "
+            "You must explicitly set CRBCL_ALLOW_SYNTHETIC_SEEDING=true in an authorized, "
+            "isolated non-production test environment."
+        )
+
+    # 2. Refuse if application environment is production
+    is_prod = getattr(settings, "is_production", False) or getattr(settings, "app_env", "").lower() == "production"
+    if is_prod:
+        raise RuntimeError(
+            "CRITICAL SECURITY REJECTION: Synthetic seeding cannot run in production (app_env=production)."
+        )
+
+    # 3. Verify database destination URL
+    db_url = (getattr(settings, "database_url", "") or "").lower()
+    if not db_url:
+        raise RuntimeError("CRITICAL SECURITY REJECTION: No database destination URL configured.")
+
+    for pattern in PROHIBITED_HOST_PATTERNS:
+        if pattern in db_url:
+            raise RuntimeError(
+                f"CRITICAL SECURITY REJECTION: Target database URL matches prohibited live pattern '{pattern}'. "
+                "Synthetic seeding is permanently blocked from live infrastructure."
+            )
+
+    # 4. Parse host and reject ambiguous destinations
+    is_sqlite = "sqlite" in db_url
+    if is_sqlite:
+        for pattern in PROHIBITED_HOST_PATTERNS:
+            if pattern in db_url:
+                raise RuntimeError(
+                    f"CRITICAL SECURITY REJECTION: SQLite file path contains prohibited pattern '{pattern}'."
+                )
+    else:
+        parsed = urlparse(db_url.replace("postgresql+asyncpg://", "http://").replace("postgresql://", "http://"))
+        host = (parsed.hostname or "").lower()
+        is_allowed_host = any(allowed in host for allowed in ALLOWED_HOSTS) if host else False
+
+        if not is_allowed_host:
+            raise RuntimeError(
+                f"CRITICAL SECURITY REJECTION: Database host '{host}' is not on the verified local/staging whitelist. "
+                "Synthetic seeding requires an isolated local or explicitly verified staging target."
+            )
+
+    # 5. Verify password complexity if supplied
+    pw_to_check = test_password
+    if pw_to_check is None:
+        pw_to_check = getattr(settings, "crbcl_synthetic_test_password", None) or os.environ.get("CRBCL_SYNTHETIC_TEST_PASSWORD")
+
+    if pw_to_check:
+        if len(pw_to_check) < 12:
+            raise RuntimeError(
+                "CRITICAL SECURITY REJECTION: CRBCL_SYNTHETIC_TEST_PASSWORD does not meet minimum length "
+                "(minimum 12 characters required)."
+            )
+        has_upper = any(c.isupper() for c in pw_to_check)
+        has_lower = any(c.islower() for c in pw_to_check)
+        has_digit = any(c.isdigit() for c in pw_to_check)
+        has_special = any(not c.isalnum() for c in pw_to_check)
+        if not (has_upper and has_lower and has_digit and has_special):
+            raise RuntimeError(
+                "CRITICAL SECURITY REJECTION: CRBCL_SYNTHETIC_TEST_PASSWORD does not meet complexity requirements "
+                "(must contain uppercase, lowercase, digit, and special symbol)."
+            )
+
 
 async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
-    logger.info("Initializing staging synthetic test dataset...")
+    settings = get_settings()
+    verify_safe_seeding_environment(settings)
+
+    logger.info("Environment verified safe for synthetic staging dataset. Initializing...")
+
+    # Determine secure credentials from environment or generate strong token
+    supplied_password = settings.crbcl_synthetic_test_password or os.environ.get("CRBCL_SYNTHETIC_TEST_PASSWORD")
+    if not supplied_password:
+        generated_token = secrets.token_urlsafe(24)
+        active_password = generated_token
+        logger.info("Synthetic credentials generated via secure cryptographically strong random token.")
+    else:
+        verify_safe_seeding_environment(settings, test_password=supplied_password)
+        active_password = supplied_password
+        logger.info("Using externally supplied synthetic test credentials from configuration.")
+
+    password_hash = hash_password(active_password)
 
     # 1. Ensure Baseline Roles exist
     roles = {}
@@ -136,7 +253,7 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
         db.add(ph_team)
         await db.flush()
 
-    # 4. Standard Authorized Test Users (with password123)
+    # 4. Standard Authorized Test Users — NEVER modify existing non-synthetic accounts
     users_data = [
         ("director@crbcl.ca", "Chief Executive Director", "executive_director"),
         ("supervisor@crbcl.ca", "Karen Supervisor", "supervisor"),
@@ -148,10 +265,11 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
         u_res = await db.execute(select(User).where(User.email == email))
         user = u_res.scalars().first()
         if not user:
+            # Create synthetic user with secured credentials
             user = User(
                 email=email,
                 email_normalized=email.lower(),
-                password_hash=hash_password("password123"),
+                password_hash=password_hash,
                 full_name=full_name,
                 is_active=True,
                 is_verified=True,
@@ -160,14 +278,21 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             await db.flush()
             db.add(UserRole(user_id=user.id, role_id=roles[role_key].id))
             db.add(TeamMembership(user_id=user.id, team_id=ph_team.id, is_primary=True))
+            db.add(UserPreference(user_id=user.id, key="team_access", value=json.dumps(["3", "all"] if role_key in ["executive_director", "supervisor"] else ["3"])))
+        else:
+            # Ensure team_access preference exists so user can access PH workspace
+            pref_check = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id, UserPreference.key == "team_access"))
+            if not pref_check.scalars().first():
+                db.add(UserPreference(user_id=user.id, key="team_access", value=json.dumps(["3", "all"] if role_key in ["executive_director", "supervisor"] else ["3"])))
 
-    # 5. Canonical Persons with strict 10-digit IDs
+    # 5. Canonical Persons with strict 10-digit IDs and UNMISTAKABLY FICTIONAL IDENTITIES
+    # Zero real individuals or real community band names are used
     persons_data = [
-        ("1000000001", "George", "Pelletier", date(1985, 4, 12), "Cowessess First Nation"),
-        ("1000000002", "Sarah", "Pelletier", date(1988, 9, 22), "Cowessess First Nation"),
-        ("1000000003", "Marcus", "Delorme", date(1992, 1, 15), "Cowessess First Nation"),
-        ("1000000004", "Marcus", "J. Delorme", date(1990, 11, 3), "Zagimay / Ochapowace"),  # Disambiguation candidate
-        ("1000000005", "Elena", "Whitebear", date(2015, 6, 18), "Cowessess First Nation"),
+        ("1000000001", "Synthetic-Person", "Alpha-TestFamily", date(1990, 1, 1), "Synthetic Nation Alpha"),
+        ("1000000002", "Synthetic-Person", "Beta-TestFamily", date(1992, 2, 2), "Synthetic Nation Alpha"),
+        ("1000000003", "Synthetic-Disambig", "Candidate-One", date(1988, 3, 3), "Synthetic Nation Alpha"),
+        ("1000000004", "Synthetic-Disambig", "Candidate-Two", date(1987, 4, 4), "Synthetic Neighbor Community"),
+        ("1000000005", "Synthetic-Child", "Epsilon-TestFamily", date(2018, 5, 5), "Synthetic Nation Alpha"),
     ]
     seeded_persons = {}
     for pid_num, fn, ln, dob, nation in persons_data:
@@ -184,14 +309,14 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             await db.flush()
         seeded_persons[pid_num] = person
 
-    # 6. Canonical Client & Case for George Pelletier
+    # 6. Canonical Client & Case for Synthetic Alpha
     c_res = await db.execute(select(Client).where(Client.person_id == seeded_persons["1000000001"].id))
     client = c_res.scalars().first()
     if not client:
         client = Client(
             person_id=seeded_persons["1000000001"].id,
-            first_name="George",
-            last_name="Pelletier",
+            first_name="Synthetic-Person",
+            last_name="Alpha-TestFamily",
             status="ACTIVE",
         )
         db.add(client)
@@ -243,14 +368,14 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
         ))
 
     # Profile 3: Verified Employee WITHOUT Login Account
-    emp_res = await db.execute(select(Employee).where(Employee.email == "synthetic.verified3@crbcl.ca"))
+    emp_res = await db.execute(select(Employee).where(Employee.email == "synthetic.verified3@crbcl.test"))
     verified_emp = emp_res.scalars().first()
     if not verified_emp:
         verified_emp = Employee(
             employee_number="EMP-SYNTH-003",
             first_name="Synthetic",
             last_name="Worker Three",
-            email="synthetic.verified3@crbcl.ca",
+            email="synthetic.verified3@crbcl.test",
             phone="306-555-0103",
             position="Family Preservation Specialist",
             department="Prevention & Healing",
@@ -268,7 +393,7 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             display_name_from_excel="Synthetic Verified Worker Three",
             position="Family Preservation Specialist",
             department="Prevention & Healing",
-            email="synthetic.verified3@crbcl.ca",
+            email="synthetic.verified3@crbcl.test",
             phone="306-555-0103",
             employee_id=verified_emp.id,
             onboarding_status="VERIFIED_PENDING_ACCOUNT",  # Verified but CANNOT authenticate
@@ -291,10 +416,10 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             ))
 
     # 9. Synthetic Enhancement Programs (Decimal-accurate expenditures)
-    ep1_check = await db.execute(select(EnhancementProgram).where(EnhancementProgram.program == "Traditional Beading & Storytelling"))
+    ep1_check = await db.execute(select(EnhancementProgram).where(EnhancementProgram.program == "Synthetic Cultural Storytelling Workshop"))
     if not ep1_check.scalars().first():
         db.add(EnhancementProgram(
-            program="Traditional Beading & Storytelling",
+            program="Synthetic Cultural Storytelling Workshop",
             program_activity="Youth Cultural Circle",
             employee_name_raw="Synthetic Pending Worker One",
             employee_id=None,
@@ -302,7 +427,7 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             date_provided=date(2026, 6, 15),
             city="Regina",
             province="SK",
-            partners="Cowessess Knowledge Keepers",
+            partners="Synthetic Partner Knowledge Circle",
             families_in_province=8,
             families_out_of_province=2,
             participants_children_0_12=10,
@@ -323,16 +448,16 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             fiscal_year="2026-2027",
         ))
 
-    ep2_check = await db.execute(select(EnhancementProgram).where(EnhancementProgram.program == "Land-Based Parenting Camp"))
+    ep2_check = await db.execute(select(EnhancementProgram).where(EnhancementProgram.program == "Synthetic Land-Based Parenting Gathering"))
     if not ep2_check.scalars().first():
         db.add(EnhancementProgram(
-            program="Land-Based Parenting Camp",
+            program="Synthetic Land-Based Parenting Gathering",
             program_activity="Family Camp Round Valley",
             employee_name_raw="Synthetic Verified Worker Three",
             employee_id=verified_emp.id,
             record_date=date(2026, 7, 20),
             date_provided=date(2026, 7, 20),
-            city="Cowessess",
+            city="Synthetic-Centre",
             province="SK",
             partners="Chief Red Bear Lodge Staff",
             families_in_province=12,
@@ -404,35 +529,35 @@ async def seed_staging_synthetic_data(db: AsyncSession) -> dict:
             fiscal_year="2026-2027",
         ))
 
-    # 11. Synthetic Other Nations Support
-    on1_check = await db.execute(select(OtherNationsSupport).where(OtherNationsSupport.family_reference_raw == "Delorme Family Household"))
+    # 11. Synthetic Other Nations Support (Fictional Household references)
+    on1_check = await db.execute(select(OtherNationsSupport).where(OtherNationsSupport.family_reference_raw == "Synthetic Household Alpha"))
     if not on1_check.scalars().first():
         db.add(OtherNationsSupport(
             worker_name_raw="Synthetic Cultural Worker",
             record_date=date(2026, 7, 27),
-            family_reference_raw="Delorme Family Household",
+            family_reference_raw="Synthetic Household Alpha",
             service_type="Temporary Emergency Shelter",
             cost=Decimal("1250.00"),
             on_reserve=False,
             cowessess_connection="Extended kinship",
-            other_community="Zagimay",
-            historical_reference_number="3640201301",
+            other_community="Synthetic Partner Community",
+            historical_reference_number="SYNTH-3640201301",
             comments="Off-reserve support coordination (synthetic).",
             fiscal_year="2026-2027",
         ))
 
-    on2_check = await db.execute(select(OtherNationsSupport).where(OtherNationsSupport.family_reference_raw == "Keewatin Family"))
+    on2_check = await db.execute(select(OtherNationsSupport).where(OtherNationsSupport.family_reference_raw == "Synthetic Household Beta"))
     if not on2_check.scalars().first():
         db.add(OtherNationsSupport(
             worker_name_raw="Synthetic Intake Coordinator",
             record_date=date(2026, 8, 12),
-            family_reference_raw="Keewatin Family",
+            family_reference_raw="Synthetic Household Beta",
             service_type="Medical Travel & Lodging",
             cost=Decimal("850.50"),
             on_reserve=False,
-            cowessess_connection="Spouse band member",
-            other_community="Muscowpetung",
-            historical_reference_number="3610258302",
+            cowessess_connection="Spouse kinship member",
+            other_community="Synthetic Ally Community",
+            historical_reference_number="SYNTH-3610258302",
             comments="Travel support for specialized children's medical care (synthetic).",
             fiscal_year="2026-2027",
         ))

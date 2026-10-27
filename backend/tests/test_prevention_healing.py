@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_settings
+from app.core.seed_staging_synthetic import verify_safe_seeding_environment
 from app.models.case_note import CaseNote
 from app.models.org_ops import Employee
 from app.models.person import Person
@@ -606,10 +607,17 @@ async def test_excel_import_wizard_analyze_approve_execute(
     assert len(records) == 2
     assert {r.program for r in records} == {"Youth Healing Circle", "Parenting Wisdom"}
 
-    # 6. Test duplicate prevention: Uploading the exact same file returns 400 Bad Request
-    dup_res = await client.post("/api/v1/ph/import/analyze", files=files, headers=headers)
-    assert dup_res.status_code == 400
-    assert "duplicate" in dup_res.text.lower() and "detected" in dup_res.text.lower()
+    # 6. Test duplicate prevention: Uploading the exact same file marks rows as CONFIRMED_DUPLICATE
+    buf.seek(0)
+    files_dup = {"file": ("synthetic_tracker_1.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    dup_res = await client.post("/api/v1/ph/import/analyze", files=files_dup, headers=headers)
+    assert dup_res.status_code == 200
+    dup_data = dup_res.json()
+    assert dup_data["duplicate_rows"] == 2
+    assert dup_data["valid_rows"] == 0
+    assert dup_data["ready_for_approval"] is False
+    assert all(r["status"] == "CONFIRMED_DUPLICATE" for r in dup_data["preview_rows"])
+
 
     # 7. Test cancelling a newly analyzed distinct batch
     wb2 = openpyxl.Workbook()
@@ -832,3 +840,294 @@ async def test_financial_decimal_accuracy_and_fiscal_years(
     assert res_curr.status_code == 200
     assert res_curr.json()["fiscal_year"] == "2026-2027"
     assert res_curr.json()["enhancement_programs"]["total_cost"] == 666.66
+
+
+@pytest.mark.asyncio
+async def test_phase5_synthetic_seeder_security_safeguards():
+    """Phase 5 Priority 2 Negative Tests:
+    Verifies that unsafe seeding scenarios are strictly rejected before modifying any records:
+    1. Seeding authorization disabled (CRBCL_ALLOW_SYNTHETIC_SEEDING=false).
+    2. Weak password supplied (does not meet length or complexity).
+    3. Production-like database URL (railway.app, genserver.online, production, live).
+    4. Unrecognized database host (not on allowlist).
+    5. Production application environment (APP_ENV=production or is_production=True).
+    """
+    from types import SimpleNamespace
+
+    # 1. Authorization disabled
+    s1 = SimpleNamespace(
+        crbcl_allow_synthetic_seeding=False,
+        is_production=False,
+        app_env="development",
+        database_url="sqlite:///test.db",
+        crbcl_synthetic_test_password=None,
+    )
+    with pytest.raises(RuntimeError, match="Synthetic seeding is disabled by default"):
+        verify_safe_seeding_environment(s1)
+
+    # 2. Production environment rejection
+    s2 = SimpleNamespace(
+        crbcl_allow_synthetic_seeding=True,
+        is_production=True,
+        app_env="production",
+        database_url="sqlite:///test.db",
+        crbcl_synthetic_test_password=None,
+    )
+    with pytest.raises(RuntimeError, match="cannot run in production"):
+        verify_safe_seeding_environment(s2)
+
+    # 3. Prohibited production host patterns
+    prohibited_urls = [
+        "postgresql+asyncpg://app:secret@crbcl-production.up.railway.app:5432/railway",
+        "postgresql+asyncpg://app:secret@genserver.online:5432/crbcl_live",
+        "postgresql+asyncpg://app:secret@rlwy.net:5432/production_db",
+    ]
+    for p_url in prohibited_urls:
+        s3 = SimpleNamespace(
+            crbcl_allow_synthetic_seeding=True,
+            is_production=False,
+            app_env="development",
+            database_url=p_url,
+            crbcl_synthetic_test_password=None,
+        )
+        with pytest.raises(RuntimeError, match="prohibited live pattern"):
+            verify_safe_seeding_environment(s3)
+
+    # 4. Unrecognized host (not in ALLOWED_HOSTS)
+    s4 = SimpleNamespace(
+        crbcl_allow_synthetic_seeding=True,
+        is_production=False,
+        app_env="development",
+        database_url="postgresql+asyncpg://user:pass@unknown-external-cloud.com:5432/somedb",
+        crbcl_synthetic_test_password=None,
+    )
+    with pytest.raises(RuntimeError, match="not on the verified local/staging whitelist"):
+        verify_safe_seeding_environment(s4)
+
+    # 5. Weak password rejection
+    weak_passwords = ["short", "weakpassword", "NoDigitsOrSpecial!", "123456789012"]
+    for wp in weak_passwords:
+        s5 = SimpleNamespace(
+            crbcl_allow_synthetic_seeding=True,
+            is_production=False,
+            app_env="development",
+            database_url="sqlite:///staging_test.db",
+            crbcl_synthetic_test_password=wp,
+        )
+        with pytest.raises(RuntimeError, match="minimum length|complexity requirements"):
+            verify_safe_seeding_environment(s5, test_password=wp)
+
+    # 6. Valid safe local environment passes cleanly
+    s_safe = SimpleNamespace(
+        crbcl_allow_synthetic_seeding=True,
+        is_production=False,
+        app_env="development",
+        database_url="sqlite:///staging_test.db",
+        crbcl_synthetic_test_password="ValidStaging2026!SecureKey",
+    )
+    # Should not raise
+    verify_safe_seeding_environment(s_safe, test_password="ValidStaging2026!SecureKey")
+
+
+@pytest.mark.asyncio
+async def test_phase5_duplicate_detection_10_scenarios(
+    client: AsyncClient, executive_director_user, caseworker_user, it_admin_user, db_session: AsyncSession
+):
+    """Verifies all 10 duplicate detection scenarios required for Phase 5:
+    1. Identical workbook uploaded twice -> second upload identifies all rows as CONFIRMED_DUPLICATE.
+    2. Modified workbook uploaded again -> unchanged rows are CONFIRMED_DUPLICATE, new row is VALID.
+    3. Rows reordered -> row order changes do not bypass duplicate detection or cause duplicate insertion.
+    4. Same service recorded twice legitimately -> second entry is flagged as POSSIBLE_DUPLICATE.
+    5. Same employee and family receiving identical services on same date -> flagged as POSSIBLE_DUPLICATE for review.
+    6. Duplicate within one worksheet -> second instance is flagged as POSSIBLE_DUPLICATE for review.
+    7. Import interrupted and retried -> retrying execution skips already imported rows and creates 0 duplicates.
+    8. Possible duplicate accepted as a separate service -> authorized reviewer marks CONFIRMED_SEPARATE and it imports.
+    9. Possible duplicate rejected -> reviewer marks REJECTED_DUPLICATE and it is excluded from import.
+    10. Unauthorized duplicate review -> unauthorized users (IT Admin / Caseworker without approve permission) receive 403.
+    """
+    ed_headers = executive_director_user["headers"]
+    cw_headers = caseworker_user["headers"]
+    it_headers = it_admin_user["headers"]
+
+    settings = get_settings()
+
+    def build_fs_workbook(rows_data):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Family Support"
+        fs_headers = [
+            "", "Date\n(dd-Mon-yy)", "Employee Name", "Employee Position", "Service Area",
+            "Program", "Support Type", "Brief Description", "Partners", "Date Provided",
+            "RedMane ID", "City", "Province", "Children 0-12", "Youth 13-17", "Post Majority 18-26",
+            "Adults 18+", "Account", "Sub", "Project", "Gift Card", "Purchase Order", "EFT",
+            "Cheque", "Credit Card", "Petty Cash", "Courtesy Card", "Total Cost", "Comments"
+        ]
+        for c_idx, h in enumerate(fs_headers, 1):
+            ws.cell(7, c_idx, h)
+        for r_offset, rdata in enumerate(rows_data):
+            row_idx = 8 + r_offset
+            ws.cell(row_idx, 2, rdata.get("date", "2026-07-10"))
+            ws.cell(row_idx, 3, rdata.get("worker", "Worker Alice"))
+            ws.cell(row_idx, 5, "Urban")
+            ws.cell(row_idx, 6, rdata.get("program", "Family Support"))
+            ws.cell(row_idx, 7, rdata.get("type", "Food Security"))
+            ws.cell(row_idx, 10, rdata.get("date_provided", "2026-07-10"))
+            ws.cell(row_idx, 11, rdata.get("client_ref", "RM-50101"))
+            ws.cell(row_idx, 21, rdata.get("gift_card", 150.00))
+            ws.cell(row_idx, 28, rdata.get("total_cost", 150.00))
+            ws.cell(row_idx, 29, rdata.get("comments", "Synthetic test entry"))
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+
+    # --- Scenario 1: Initial upload, approval, execution, and identical workbook upload twice ---
+    content1 = build_fs_workbook([
+        {"date": "2026-07-10", "worker": "Worker Alice", "client_ref": "RM-50101", "type": "Food Security", "gift_card": 150.00, "total_cost": 150.00},
+        {"date": "2026-07-11", "worker": "Worker Bob", "client_ref": "RM-50102", "type": "Clothing Voucher", "gift_card": 100.00, "total_cost": 100.00},
+    ])
+    files1 = {"file": ("batch_test_1.xlsx", content1, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    res_an1 = await client.post("/api/v1/ph/import/analyze", files=files1, headers=ed_headers)
+    assert res_an1.status_code == 200
+    data_an1 = res_an1.json()
+    batch_id1 = data_an1["batch_id"]
+    assert data_an1["valid_rows"] == 2
+    assert data_an1["duplicate_rows"] == 0
+
+    settings.crbcl_ph_real_import_enabled = True
+    try:
+        await client.post(f"/api/v1/ph/import/approve/{batch_id1}", headers=ed_headers)
+        res_ex1 = await client.post(f"/api/v1/ph/import/execute/{batch_id1}", headers=ed_headers)
+        assert res_ex1.status_code == 200
+        assert res_ex1.json()["imported_rows"] == 2
+
+        # Re-upload identical workbook (Scenario 1)
+        files1_again = {"file": ("batch_test_1.xlsx", content1, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        res_an1_dup = await client.post("/api/v1/ph/import/analyze", files=files1_again, headers=ed_headers)
+        assert res_an1_dup.status_code == 200
+        dup_data = res_an1_dup.json()
+        assert dup_data["duplicate_rows"] == 2
+        assert dup_data["valid_rows"] == 0
+        assert dup_data["ready_for_approval"] is False
+        assert all(r["status"] == "CONFIRMED_DUPLICATE" for r in dup_data["preview_rows"])
+
+        # --- Scenario 2: Modified workbook uploaded again ---
+        content_mod = build_fs_workbook([
+            {"date": "2026-07-10", "worker": "Worker Alice", "client_ref": "RM-50101", "type": "Food Security", "gift_card": 150.00, "total_cost": 150.00},
+            {"date": "2026-07-12", "worker": "Worker Charlie", "client_ref": "RM-50109", "type": "Bus Pass", "gift_card": 75.00, "total_cost": 75.00},
+        ])
+        files_mod = {"file": ("batch_test_mod.xlsx", content_mod, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        res_an_mod = await client.post("/api/v1/ph/import/analyze", files=files_mod, headers=ed_headers)
+        assert res_an_mod.status_code == 200
+        mod_data = res_an_mod.json()
+        assert mod_data["valid_rows"] == 1
+        assert mod_data["duplicate_rows"] + mod_data["ambiguous_rows"] == 1
+
+        # --- Scenario 3: Rows reordered ---
+        content_reordered = build_fs_workbook([
+            {"date": "2026-07-11", "worker": "Worker Bob", "client_ref": "RM-50102", "type": "Clothing Voucher", "gift_card": 100.00, "total_cost": 100.00},
+            {"date": "2026-07-10", "worker": "Worker Alice", "client_ref": "RM-50101", "type": "Food Security", "gift_card": 150.00, "total_cost": 150.00},
+        ])
+        files_reordered = {"file": ("batch_reordered.xlsx", content_reordered, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        res_an_reorder = await client.post("/api/v1/ph/import/analyze", files=files_reordered, headers=ed_headers)
+        assert res_an_reorder.status_code == 200
+        reorder_data = res_an_reorder.json()
+        assert reorder_data["valid_rows"] == 0
+        assert reorder_data["duplicate_rows"] + reorder_data["ambiguous_rows"] == 2
+
+        # --- Scenario 4, 5, 6: Same employee and family receiving identical services on same date & intra-sheet duplicate ---
+        content_twins = build_fs_workbook([
+            {"date": "2026-08-20", "worker": "Worker David", "client_ref": "RM-77001", "type": "Emergency Grocery", "gift_card": 200.00, "total_cost": 200.00, "comments": "Morning service"},
+            {"date": "2026-08-20", "worker": "Worker David", "client_ref": "RM-77001", "type": "Emergency Grocery", "gift_card": 200.00, "total_cost": 200.00, "comments": "Afternoon second emergency voucher"},
+        ])
+        files_twins = {"file": ("batch_twins.xlsx", content_twins, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        res_an_twins = await client.post("/api/v1/ph/import/analyze", files=files_twins, headers=ed_headers)
+        assert res_an_twins.status_code == 200
+        twins_data = res_an_twins.json()
+        batch_id_twins = twins_data["batch_id"]
+        assert twins_data["valid_rows"] == 1
+        assert twins_data["ambiguous_rows"] == 1
+
+        # --- Scenario 10: Unauthorized duplicate review (Caseworker / IT Admin receives 403) ---
+        q_res = await client.get(f"/api/v1/ph/import/batches/{batch_id_twins}/review-queue", headers=ed_headers)
+        assert q_res.status_code == 200
+        review_queue = q_res.json()
+        assert len(review_queue) >= 1
+        possible_dup_row_id = review_queue[0]["id"]
+
+        unauth_review = await client.post(
+            f"/api/v1/ph/import/rows/{possible_dup_row_id}/review",
+            json={"decision": "CONFIRMED_SEPARATE", "notes": "Unauthorized attempt"},
+            headers=cw_headers,
+        )
+        assert unauth_review.status_code == 403
+
+        it_unauth_review = await client.post(
+            f"/api/v1/ph/import/rows/{possible_dup_row_id}/review",
+            json={"decision": "CONFIRMED_SEPARATE", "notes": "IT Admin attempt"},
+            headers=it_headers,
+        )
+        assert it_unauth_review.status_code == 403
+
+        # --- Scenario 8: Possible duplicate accepted as separate legitimate service ---
+        auth_accept = await client.post(
+            f"/api/v1/ph/import/rows/{possible_dup_row_id}/review",
+            json={"decision": "CONFIRMED_SEPARATE", "notes": "Confirmed legitimate second assistance voucher"},
+            headers=ed_headers,
+        )
+        assert auth_accept.status_code == 200
+        accepted_row = auth_accept.json()
+        assert accepted_row["status"] == "CONFIRMED_SEPARATE"
+        assert accepted_row["review_decision"] == "CONFIRMED_SEPARATE"
+        assert accepted_row["review_notes"] == "Confirmed legitimate second assistance voucher"
+
+        # Now both rows are eligible for execution
+        await client.post(f"/api/v1/ph/import/approve/{batch_id_twins}", headers=ed_headers)
+        exec_twins = await client.post(f"/api/v1/ph/import/execute/{batch_id_twins}", headers=ed_headers)
+        assert exec_twins.status_code == 200
+        assert exec_twins.json()["imported_rows"] == 2
+
+        # Verify both records exist in FamilySupportRecord table
+        db_twins = (await db_session.execute(
+            select(FamilySupportRecord).where(FamilySupportRecord.client_ref_legacy_id == "RM-77001")
+        )).scalars().all()
+        assert len(db_twins) == 2
+
+        # --- Scenario 7: Import interrupted and retried (Idempotency) ---
+        retry_res = await client.post(f"/api/v1/ph/import/execute/{batch_id_twins}", headers=ed_headers)
+        assert retry_res.status_code == 200
+        db_twins_after = (await db_session.execute(
+            select(FamilySupportRecord).where(FamilySupportRecord.client_ref_legacy_id == "RM-77001")
+        )).scalars().all()
+        assert len(db_twins_after) == 2
+
+        # --- Scenario 9: Possible duplicate rejected ---
+        content_rej = build_fs_workbook([
+            {"date": "2026-08-20", "worker": "Worker David", "client_ref": "RM-77001", "type": "Emergency Grocery", "gift_card": 200.00, "total_cost": 200.00},
+        ])
+        files_rej = {"file": ("batch_rej.xlsx", content_rej, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        res_an_rej = await client.post("/api/v1/ph/import/analyze", files=files_rej, headers=ed_headers)
+        assert res_an_rej.status_code == 200
+        batch_id_rej = res_an_rej.json()["batch_id"]
+
+        q_res_rej = await client.get(f"/api/v1/ph/import/batches/{batch_id_rej}/review-queue", headers=ed_headers)
+        assert q_res_rej.status_code == 200
+        row_to_reject_id = q_res_rej.json()[0]["id"]
+
+        auth_reject = await client.post(
+            f"/api/v1/ph/import/rows/{row_to_reject_id}/review",
+            json={"decision": "REJECTED_DUPLICATE", "notes": "Confirmed true duplicate — reject ingestion"},
+            headers=ed_headers,
+        )
+        assert auth_reject.status_code == 200
+        assert auth_reject.json()["status"] == "REJECTED_DUPLICATE"
+
+        # Attempt to approve and execute: since valid rows is 0, execution rejects
+        await client.post(f"/api/v1/ph/import/approve/{batch_id_rej}", headers=ed_headers)
+        exec_rejected = await client.post(f"/api/v1/ph/import/execute/{batch_id_rej}", headers=ed_headers)
+        assert exec_rejected.status_code == 400
+        assert "no valid" in exec_rejected.text.lower()
+
+    finally:
+        settings.crbcl_ph_real_import_enabled = False
+

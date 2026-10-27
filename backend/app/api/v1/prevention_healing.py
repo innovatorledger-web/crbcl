@@ -203,6 +203,12 @@ class PendingStaffUpdate(BaseModel):
     notes: str | None = None
 
 
+class DuplicateReviewIn(BaseModel):
+    decision: str  # "CONFIRMED_SEPARATE" or "REJECTED_DUPLICATE"
+    notes: str | None = None
+
+
+
 # ──────────────────────────────────────────────────────────────
 # Enhancement Programs
 # ──────────────────────────────────────────────────────────────
@@ -1142,6 +1148,73 @@ async def cancel_import(
     return _serialize_batch(batch)
 
 
+@router.get("/import/batches/{batch_id}/review-queue")
+async def get_import_review_queue(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(require_permission(Permissions.PH_IMPORT_HISTORY_READ)),
+):
+    """Retrieve all rows in a batch flagged for duplicate or ambiguity review."""
+    q = (
+        select(PHImportRow)
+        .where(
+            PHImportRow.batch_id == batch_id,
+            PHImportRow.status.in_(["POSSIBLE_DUPLICATE", "CONFIRMED_SEPARATE", "REJECTED_DUPLICATE", "FLAGGED_FOR_REVIEW"]),
+        )
+        .order_by(PHImportRow.source_row_number)
+    )
+    result = await db.execute(q)
+    return [_serialize_row(r) for r in result.scalars().all()]
+
+
+@router.post("/import/rows/{row_id}/review")
+async def review_import_row(
+    row_id: uuid.UUID,
+    body: DuplicateReviewIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permissions.PH_IMPORT_APPROVE)),
+):
+    """Authorized reviewer approves a possible duplicate as separate legitimate service or rejects it."""
+    if body.decision not in ("CONFIRMED_SEPARATE", "REJECTED_DUPLICATE"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid review decision: {body.decision!r}. Must be 'CONFIRMED_SEPARATE' or 'REJECTED_DUPLICATE'.",
+        )
+
+    row = await db.get(PHImportRow, row_id)
+    if not row:
+        raise _not_found("Import row", row_id)
+
+    row.status = body.decision
+    row_data = dict(row.row_data or {})
+    row_data["duplicate_classification"] = body.decision
+    row_data["review_decision"] = body.decision
+    row_data["reviewed_by_id"] = str(current_user.id)
+    row_data["reviewed_by_email"] = current_user.email
+    row_data["reviewed_at"] = datetime.now(UTC).isoformat()
+    row_data["review_notes"] = body.notes
+    row.row_data = row_data
+
+    # Recalculate batch valid/invalid counts
+    batch = await db.get(PHImportBatch, row.batch_id)
+    if batch:
+        q_valid = select(func.count(PHImportRow.id)).where(
+            PHImportRow.batch_id == batch.id,
+            PHImportRow.status.in_(["VALID", "CONFIRMED_SEPARATE"]),
+        )
+        batch.valid_rows = (await db.execute(q_valid)).scalar() or 0
+        q_invalid = select(func.count(PHImportRow.id)).where(
+            PHImportRow.batch_id == batch.id,
+            PHImportRow.status.in_(["INVALID", "CONFIRMED_DUPLICATE", "REJECTED_DUPLICATE", "POSSIBLE_DUPLICATE", "FLAGGED_FOR_REVIEW"]),
+        )
+        batch.invalid_rows = (await db.execute(q_invalid)).scalar() or 0
+
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_row(row)
+
+
+
 def _parse_excel_date(v: Any) -> date | None:
     if v is None:
         return None
@@ -1195,23 +1268,27 @@ async def analyze_import(
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # Duplicate workbook upload check via cryptographic content hash
+    # Cryptographic content hash for source provenance tracking
     file_hash = hashlib.sha256(contents).hexdigest()
-    res_dup = await db.execute(
+    res_prior_batches = await db.execute(
         select(PHImportBatch).where(
             PHImportBatch.file_hash == file_hash,
-            PHImportBatch.status.in_(["COMPLETED", "APPROVED", "IMPORTING"]),
+            PHImportBatch.status.in_(["COMPLETED", "APPROVED"]),
         )
     )
-    dup = res_dup.scalars().first()
-    if dup:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Duplicate workbook upload detected: This file content has already been processed in batch {dup.id} "
-                f"(status: {dup.status}). Re-uploading identical historical files is prohibited."
-            ),
+    prior_completed_batches = res_prior_batches.scalars().all()
+    prior_batch_ids = [b.id for b in prior_completed_batches]
+
+    prior_imported_source_rows = set()
+    if prior_batch_ids:
+        res_imported_rows = await db.execute(
+            select(PHImportRow.source_row_number).where(
+                PHImportRow.batch_id.in_(prior_batch_ids),
+                PHImportRow.status == "IMPORTED",
+            )
         )
+        prior_imported_source_rows = set(res_imported_rows.scalars().all())
+
 
     try:
         wb = openpyxl.load_workbook(BytesIO(contents), data_only=True)
@@ -1259,6 +1336,8 @@ async def analyze_import(
     total_rows = 0
     valid_rows = 0
     invalid_rows = 0
+    duplicate_rows = 0
+    ambiguous_rows = 0
     employee_issues = set()
     client_issues = set()
 
@@ -1276,6 +1355,9 @@ async def analyze_import(
     cref_map = {cr.legacy_id.strip(): cr for cr in known_crefs}
 
     staged_rows = []
+    seen_ep_sheet: dict[tuple, int] = {}
+    seen_fsr_sheet: dict[tuple, int] = {}
+    seen_ons_sheet: dict[tuple, int] = {}
 
     for r in range(data_start_row, sheet.max_row + 1):
         if record_type == "ENHANCEMENT_PROGRAM":
@@ -1395,11 +1477,63 @@ async def analyze_import(
                 "fiscal_year": fiscal_year,
             }
 
-            status_val = "VALID" if not errors else "INVALID"
-            if status_val == "VALID":
+            # Check for duplicate records (source provenance vs possible duplicate)
+            is_confirmed_dup = False
+            is_possible_dup = False
+            dup_msg = None
+
+            # 1. Provenance check: row proven to have already been imported
+            if r in prior_imported_source_rows:
+                is_confirmed_dup = True
+                dup_msg = f"Confirmed duplicate: source row #{r} has already been imported via verified source provenance."
+            elif prog and (rec_date or dt_prov):
+                check_date = rec_date or _parse_excel_date(dt_prov)
+                sig = ((emp_name_str or "").strip().lower(), check_date, str(prog).strip().lower(), str(calc_cost))
+                if sig in seen_ep_sheet:
+                    is_possible_dup = True
+                    dup_msg = f"Possible duplicate: identical program entry repeated in this worksheet (row #{seen_ep_sheet[sig]}). Quarantined for review."
+                else:
+                    seen_ep_sheet[sig] = r
+                    q_dup = select(EnhancementProgram).where(
+                        EnhancementProgram.program == str(prog).strip(),
+                        (EnhancementProgram.record_date == check_date) | (EnhancementProgram.date_provided == check_date),
+                    )
+                    existing_matches = (await db.execute(q_dup)).scalars().all()
+                    for em in existing_matches:
+                        em_cost = (
+                            em.expense_gift_card + em.expense_purchase_order + em.expense_eft +
+                            em.expense_cheque + em.expense_credit_card + em.expense_courtesy_card
+                        )
+                        if em.import_batch_id and em.import_batch_id in prior_batch_ids and em.source_row_number == r:
+                            is_confirmed_dup = True
+                            dup_msg = f"Confirmed duplicate: proven imported in prior batch {em.import_batch_id} (row #{r})."
+                            break
+                        elif (em.employee_name_raw or "").strip().lower() == (emp_name_str or "").lower() or abs(em_cost - calc_cost) < Decimal("0.01"):
+                            is_possible_dup = True
+                            dup_msg = f"Possible duplicate: resembles existing program '{prog}' on {check_date} (Worker: {emp_name_str}, Cost: ${calc_cost}). Quarantined for authorized review."
+                            break
+
+            if is_confirmed_dup:
+                status_val = "CONFIRMED_DUPLICATE"
+                errors.append(dup_msg)
+                duplicate_rows += 1
+            elif is_possible_dup:
+                status_val = "POSSIBLE_DUPLICATE"
+                errors.append(dup_msg)
+                ambiguous_rows += 1
+            elif not errors:
+                status_val = "VALID"
                 valid_rows += 1
             else:
+                status_val = "INVALID"
                 invalid_rows += 1
+
+            row_dict["duplicate_classification"] = (
+                "CONFIRMED_DUPLICATE" if status_val == "CONFIRMED_DUPLICATE"
+                else "POSSIBLE_DUPLICATE" if status_val == "POSSIBLE_DUPLICATE"
+                else "NEW_RECORD" if status_val == "VALID"
+                else "INVALID"
+            )
 
             im_row = PHImportRow(
                 batch_id=batch.id,
@@ -1560,11 +1694,63 @@ async def analyze_import(
                 "client_match_status": client_match_status,
             }
 
-            status_val = "VALID" if not errors else "INVALID"
-            if status_val == "VALID":
+            # Check for duplicate records (source provenance vs possible duplicate)
+            is_confirmed_dup = False
+            is_possible_dup = False
+            dup_msg = None
+
+            # 1. Provenance check: row proven to have already been imported
+            if r in prior_imported_source_rows:
+                is_confirmed_dup = True
+                dup_msg = f"Confirmed duplicate: source row #{r} has already been imported via verified source provenance."
+            elif rm_id_str and (rec_date or dt_prov):
+                check_date = rec_date or _parse_excel_date(dt_prov)
+                sig = (rm_id_str.strip().lower(), check_date, str(st_type or "").strip().lower(), str(calc_cost))
+                if sig in seen_fsr_sheet:
+                    is_possible_dup = True
+                    dup_msg = f"Possible duplicate: identical support entry repeated in this worksheet (row #{seen_fsr_sheet[sig]}). Quarantined for review."
+                else:
+                    seen_fsr_sheet[sig] = r
+                    q_dup = select(FamilySupportRecord).where(
+                        FamilySupportRecord.client_ref_legacy_id == rm_id_str,
+                        (FamilySupportRecord.record_date == check_date) | (FamilySupportRecord.date_provided == check_date),
+                    )
+                    existing_matches = (await db.execute(q_dup)).scalars().all()
+                    for fm in existing_matches:
+                        fm_cost = (
+                            fm.expense_gift_card + fm.expense_purchase_order + fm.expense_eft +
+                            fm.expense_cheque + fm.expense_credit_card + fm.expense_petty_cash + fm.expense_courtesy_card
+                        )
+                        if fm.import_batch_id and fm.import_batch_id in prior_batch_ids and fm.source_row_number == r:
+                            is_confirmed_dup = True
+                            dup_msg = f"Confirmed duplicate: proven imported in prior batch {fm.import_batch_id} (row #{r})."
+                            break
+                        else:
+                            is_possible_dup = True
+                            dup_msg = f"Possible duplicate: resembles existing support record for client {rm_id_str} on {check_date} (Type: {st_type}, Cost: ${calc_cost}). Quarantined for authorized review."
+                            break
+
+            if is_confirmed_dup:
+                status_val = "CONFIRMED_DUPLICATE"
+                errors.append(dup_msg)
+                duplicate_rows += 1
+            elif is_possible_dup:
+                status_val = "POSSIBLE_DUPLICATE"
+                errors.append(dup_msg)
+                ambiguous_rows += 1
+            elif not errors:
+                status_val = "VALID"
                 valid_rows += 1
             else:
+                status_val = "INVALID"
                 invalid_rows += 1
+
+            row_dict["duplicate_classification"] = (
+                "CONFIRMED_DUPLICATE" if status_val == "CONFIRMED_DUPLICATE"
+                else "POSSIBLE_DUPLICATE" if status_val == "POSSIBLE_DUPLICATE"
+                else "NEW_RECORD" if status_val == "VALID"
+                else "INVALID"
+            )
 
             im_row = PHImportRow(
                 batch_id=batch.id,
@@ -1657,11 +1843,59 @@ async def analyze_import(
                 "fiscal_year": fiscal_year,
             }
 
-            status_val = "VALID" if not errors else "INVALID"
-            if status_val == "VALID":
+            # Check for duplicate records (source provenance vs possible duplicate)
+            is_confirmed_dup = False
+            is_possible_dup = False
+            dup_msg = None
+            lookup_ref = str(status_num).strip() if status_num else (str(fam_ref).strip() if fam_ref else None)
+
+            # 1. Provenance check: row proven to have already been imported
+            if r in prior_imported_source_rows:
+                is_confirmed_dup = True
+                dup_msg = f"Confirmed duplicate: source row #{r} has already been imported via verified source provenance."
+            elif lookup_ref and rec_date:
+                sig = (lookup_ref.strip().lower(), rec_date, str(serv_type or "").strip().lower(), str(cost_dec))
+                if sig in seen_ons_sheet:
+                    is_possible_dup = True
+                    dup_msg = f"Possible duplicate: identical Other Nations entry repeated in this worksheet (row #{seen_ons_sheet[sig]}). Quarantined for review."
+                else:
+                    seen_ons_sheet[sig] = r
+                    q_dup = select(OtherNationsSupport).where(
+                        (OtherNationsSupport.historical_reference_number == lookup_ref) | (OtherNationsSupport.family_reference_raw == lookup_ref),
+                        OtherNationsSupport.record_date == rec_date,
+                    )
+                    existing_matches = (await db.execute(q_dup)).scalars().all()
+                    for om in existing_matches:
+                        if om.import_batch_id and om.import_batch_id in prior_batch_ids and om.source_row_number == r:
+                            is_confirmed_dup = True
+                            dup_msg = f"Confirmed duplicate: proven imported in prior batch {om.import_batch_id} (row #{r})."
+                            break
+                        else:
+                            is_possible_dup = True
+                            dup_msg = f"Possible duplicate: resembles existing Other Nations record on {rec_date} (Ref: {lookup_ref}, Cost: ${cost_dec}). Quarantined for authorized review."
+                            break
+
+            if is_confirmed_dup:
+                status_val = "CONFIRMED_DUPLICATE"
+                errors.append(dup_msg)
+                duplicate_rows += 1
+            elif is_possible_dup:
+                status_val = "POSSIBLE_DUPLICATE"
+                errors.append(dup_msg)
+                ambiguous_rows += 1
+            elif not errors:
+                status_val = "VALID"
                 valid_rows += 1
             else:
+                status_val = "INVALID"
                 invalid_rows += 1
+
+            row_dict["duplicate_classification"] = (
+                "CONFIRMED_DUPLICATE" if status_val == "CONFIRMED_DUPLICATE"
+                else "POSSIBLE_DUPLICATE" if status_val == "POSSIBLE_DUPLICATE"
+                else "NEW_RECORD" if status_val == "VALID"
+                else "INVALID"
+            )
 
             im_row = PHImportRow(
                 batch_id=batch.id,
@@ -1680,7 +1914,7 @@ async def analyze_import(
 
     batch.total_rows_analyzed = total_rows
     batch.valid_rows = valid_rows
-    batch.invalid_rows = invalid_rows
+    batch.invalid_rows = invalid_rows + duplicate_rows + ambiguous_rows
     batch.status = "AWAITING_APPROVAL"
 
     await db.commit()
@@ -1694,6 +1928,9 @@ async def analyze_import(
         "total_rows_analyzed": total_rows,
         "valid_rows": valid_rows,
         "invalid_rows": invalid_rows,
+        "duplicate_rows": duplicate_rows,
+        "ambiguous_rows": ambiguous_rows,
+        "possible_duplicate_rows": ambiguous_rows,
         "employee_matching_issues": sorted(list(employee_issues)),
         "client_matching_issues": sorted(list(client_issues)),
         "preview_rows": [_serialize_row(r) for r in staged_rows[:25]],
@@ -1722,20 +1959,27 @@ async def execute_import(
     batch = await db.get(PHImportBatch, batch_id)
     if not batch:
         raise _not_found("Import batch", batch_id)
-    if batch.status != "APPROVED":
+    if batch.status not in ("APPROVED", "IMPORTING", "COMPLETED"):
         raise HTTPException(
             status_code=400,
             detail=f"Batch is in status {batch.status!r} — must be APPROVED before execution."
         )
 
-    q = select(PHImportRow).where(PHImportRow.batch_id == batch_id, PHImportRow.status == "VALID")
+    q = select(PHImportRow).where(
+        PHImportRow.batch_id == batch_id,
+        PHImportRow.status.in_(["VALID", "CONFIRMED_SEPARATE", "IMPORTED"]),
+    )
     res = await db.execute(q)
     rows = res.scalars().all()
     if not rows:
-        raise HTTPException(status_code=400, detail="No VALID rows found in this batch to import.")
+        raise HTTPException(status_code=400, detail="No VALID or CONFIRMED_SEPARATE rows found in this batch to import.")
 
-    imported_count = 0
+    imported_count = batch.imported_rows or 0
     for r in rows:
+        # Idempotency safeguard: skip any rows already imported if an interrupted import is retried
+        if r.imported_record_id is not None or r.status == "IMPORTED":
+            continue
+
         data = r.row_data or {}
         if batch.record_type == "ENHANCEMENT_PROGRAM":
             rec = EnhancementProgram(
@@ -1883,11 +2127,33 @@ def _serialize_batch(r: PHImportBatch) -> dict:
 
 
 def _serialize_row(r: PHImportRow) -> dict:
+    row_dict = dict(r.row_data or {})
+    dup_class = row_dict.get("duplicate_classification")
+    if not dup_class:
+        if r.status in ("CONFIRMED_DUPLICATE", "DUPLICATE"):
+            dup_class = "CONFIRMED_DUPLICATE"
+        elif r.status in ("POSSIBLE_DUPLICATE", "FLAGGED_FOR_REVIEW"):
+            dup_class = "POSSIBLE_DUPLICATE"
+        elif r.status == "CONFIRMED_SEPARATE":
+            dup_class = "CONFIRMED_SEPARATE"
+        elif r.status == "REJECTED_DUPLICATE":
+            dup_class = "REJECTED_DUPLICATE"
+        elif r.status == "VALID":
+            dup_class = "NEW_RECORD"
+        else:
+            dup_class = r.status
+
     return {
         "id": str(r.id),
         "batch_id": str(r.batch_id),
         "source_row_number": r.source_row_number,
         "status": r.status,
+        "duplicate_classification": dup_class,
+        "review_decision": row_dict.get("review_decision"),
+        "reviewed_by_id": row_dict.get("reviewed_by_id"),
+        "reviewed_by_email": row_dict.get("reviewed_by_email"),
+        "reviewed_at": row_dict.get("reviewed_at"),
+        "review_notes": row_dict.get("review_notes"),
         "validation_errors": r.validation_errors,
         "imported_record_id": str(r.imported_record_id) if r.imported_record_id else None,
         "imported_record_type": r.imported_record_type,
@@ -1897,8 +2163,9 @@ def _serialize_row(r: PHImportRow) -> dict:
         "client_ref_raw": r.client_ref_raw,
         "client_match_status": r.client_match_status,
         "resolved_person_id": str(r.resolved_person_id) if r.resolved_person_id else None,
-        "row_data": r.row_data,
+        "row_data": row_dict,
     }
+
 
 
 # ──────────────────────────────────────────────────────────────

@@ -6,16 +6,15 @@
 **Phase:** Phase 3 Staging Verification, End-to-End Testing & Release Audit  
 
 ---
-
 ## 1. Readiness Status Dashboard
 
 | Lifecycle Phase | Status | Verification & Evidence |
 |---|:---:|---|
-| **SOURCE IMPLEMENTED** | **COMPLETED** | All 7 models, Alembic migration 031 (with `file_hash` index), 13 RBAC permissions, backend router, frontend API client, and full React workspace built and integrated. |
-| **TESTED** | **COMPLETED** | 12/12 Prevention & Healing test suites PASSED. 29/29 platform regression suites PASSED (auth, case notes, person, finance, IT admin boundaries). Total: 41/41 tests passing. |
-| **BUILD VERIFIED** | **COMPLETED** | Frontend production build (`npm run build` / `vite build`) completed with 0 compilation errors or bundle warnings (built in 2m 10s). |
-| **STAGING VERIFIED** | **VERIFIED (LOCAL ISOLATED) / CLOUD BLOCKED** | Local isolated staging environment (`staging_synthetic.db`, uvicorn :8000, vite :5173) fully verified with synthetic dataset across all 10 E2E scenarios. Cloud staging environment currently absent on Railway/Vercel; provisioning plan prepared. |
-| **PRODUCTION DEPLOYED** | **NOT AUTHORIZED** | Source staged on branch `main`; deployment to Railway production environment held until CRBCL leadership approves release window. Production website and backend strictly untouched. |
+| **SOURCE IMPLEMENTED** | **COMPLETED** | All 7 models, Alembic migration 031 (with `file_hash` index), 13 RBAC permissions, backend router, frontend API client, full React workspace, Phase 5 3-tier duplicate engine, and supervisor review queue built and integrated. |
+| **TESTED** | **COMPLETED** | 14/14 Prevention & Healing test suites PASSED (including 10 duplicate detection scenarios & seeder security). 29/29 platform regression suites PASSED (auth, case notes, person, finance, IT admin boundaries). Total: 43/43 tests passing (100%). |
+| **BUILD VERIFIED** | **COMPLETED** | Frontend production build (`npm run build` / `vite build`) completed with 0 compilation errors or bundle warnings (3,077 modules built in 2m 15s). |
+| **STAGING VERIFIED** | **VERIFIED (LOCAL ISOLATED UAT) / CLOUD BLOCKED** | Local isolated staging environment (`synthetic_uat.db`, uvicorn :8000, vite :5173) fully verified with synthetic dataset across Scenarios A through L. Cloud staging environment currently absent on Railway/Vercel; provisioning plan prepared. |
+| **PRODUCTION DEPLOYED** | **NOT AUTHORIZED** | Source staged on branch `main`; deployment to Railway production environment held until CRBCL leadership approves release window. Production website (`https://genserver.online`) and backend strictly untouched. |
 | **PRODUCTION MIGRATION** | **NOT AUTHORIZED** | Migration 031 verified as clean additive head, but not executed on production DB. Zero production database connections initiated. |
 | **LIVE VERIFIED** | **PENDING STAGING PROMOTION** | Requires cloud staging provisioning, migration execution, and executive authorization before promotion to production. |
 | **REAL HISTORICAL IMPORT** | **NOT AUTHORIZED / DISABLED** | Import execution gated behind `CRBCL_PH_REAL_IMPORT_ENABLED=false`. **Zero real historical client records have been imported into the production database.** |
@@ -65,15 +64,26 @@ The platform mandates strict canonical Person identity resolution:
 
 ---
 
-## 4. Excel Import Safety & Cryptographic Idempotency
+## 4. Excel Import Safety, 3-Tier Duplicate Engine & Cryptographic Idempotency
 
-1. **SHA-256 Content Fingerprinting:**
-   - Every uploaded workbook is hashed upon upload (`hashlib.sha256(content).hexdigest()`).
-   - The hash is stored in `ph_import_batches.file_hash` (indexed column).
-   - If an identical workbook file is uploaded again while a previous batch is `COMPLETED`, `APPROVED`, or `IMPORTING`, the API immediately rejects the upload with `HTTP 400 Bad Request` ("Duplicate workbook upload detected").
-2. **Batch Cancellation Cascades:**
-   - When an unexecuted import batch is cancelled via `POST /api/v1/ph/import/cancel/{batch_id}`, the batch status is updated to `CANCELLED` and all staged rows in `ph_import_rows` are atomically updated to `status="CANCELLED"`.
-3. **Decimal-Safe Financial Processing:**
+1. **Row-Level Source Provenance Tracking:**
+   - Rather than rejecting an entire revised workbook due to file-level hash collisions, the Phase 5 engine tracks row-level provenance (`source_batch_id` + `source_row_index`) in `ph_import_rows`.
+   - Only rows originating from previously `COMPLETED` batches are classified as `CONFIRMED_DUPLICATE`.
+2. **3-Tier Duplicate Classification Model:**
+   - Every imported row is evaluated against both historical source provenance and existing operational database records:
+     - **`CONFIRMED_DUPLICATE`:** Originates from an already completed import batch with matching source provenance, or is an exact intra-sheet repetition. Automatically excluded from database insertion.
+     - **`POSSIBLE_DUPLICATE`:** Matches an existing operational record on primary business dimensions (e.g. date + employee + support type + cost), but does NOT match previous source batch provenance. Because Prevention workers legitimately deliver multiple services on the same day (e.g., morning and afternoon food vouchers), these rows are flagged for supervisor review rather than silently discarded.
+     - **`NEW_RECORD` / `VALID`:** No historical or operational duplicate found. Eligible for automated import execution.
+3. **Authorized Duplicate Review Queue:**
+   - Endpoint `GET /api/v1/ph/import/batches/{batch_id}/review-queue`: Lists all staged rows flagged as `POSSIBLE_DUPLICATE` or `CONFIRMED_DUPLICATE`.
+   - Endpoint `POST /api/v1/ph/import/rows/{row_id}/review`: Requires `PH_IMPORT_APPROVE` (`ph.import.approve`). Allows authorized supervisors to adjudicate flagged rows:
+     - **`CONFIRMED_SEPARATE`:** Confirms the row represents a legitimate distinct service delivered on the same day. Promoted to valid import status.
+     - **`REJECTED_DUPLICATE`:** Confirms the row is a true duplicate. Excluded from execution.
+4. **Execution Idempotency & Retry Safety:**
+   - If `POST /api/v1/ph/import/execute/{batch_id}` is re-invoked or retried after network interruption, the batch checks `imported_record_id is not None` and `status == "IMPORTED"`. Already imported rows are safely skipped, guaranteeing zero duplicate record creation.
+5. **Batch Cancellation Cascades:**
+   - When an unexecuted import batch is cancelled via `DELETE /api/v1/ph/import/cancel/{batch_id}` or `POST /api/v1/ph/import/cancel/{batch_id}`, the batch status is updated to `CANCELLED` and all staged rows in `ph_import_rows` are atomically dismissed with zero operational records created.
+6. **Decimal-Safe Financial Processing:**
    - All monetary figures (gift cards, purchase orders, EFT, cheques, credit cards, courtesy cards) are parsed using Python `Decimal` and persisted in PostgreSQL `NUMERIC(12, 2)` columns, completely preventing IEEE 754 floating-point rounding errors.
 
 ---

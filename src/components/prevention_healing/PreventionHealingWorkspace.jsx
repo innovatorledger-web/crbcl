@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Sparkles,
   Shield,
@@ -31,6 +31,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Download,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,6 +102,36 @@ export default function PreventionHealingWorkspace() {
   const [onsSearch, setOnsSearch] = useState("");
   const [staffFilter, setStaffFilter] = useState("ALL");
   const [clientFilter, setClientFilter] = useState("ALL");
+
+  // Tab horizontal scroll navigation state & ref
+  const tabsContainerRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  const checkScroll = useCallback(() => {
+    if (!tabsContainerRef.current) return;
+    const { scrollLeft, scrollWidth, clientWidth } = tabsContainerRef.current;
+    setCanScrollLeft(scrollLeft > 4);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
+  }, []);
+
+  const scrollTabs = (direction) => {
+    if (!tabsContainerRef.current) return;
+    const scrollAmount = direction === "left" ? -280 : 280;
+    tabsContainerRef.current.scrollBy({ left: scrollAmount, behavior: "smooth" });
+    setTimeout(checkScroll, 320);
+  };
+
+  useEffect(() => {
+    checkScroll();
+    window.addEventListener("resize", checkScroll);
+    return () => window.removeEventListener("resize", checkScroll);
+  }, [checkScroll]);
+
+  useEffect(() => {
+    const timer = setTimeout(checkScroll, 150);
+    return () => clearTimeout(timer);
+  }, [enhancementPrograms, familySupportRecords, otherNationsRecords, pendingStaffList, clientRefsList, checkScroll]);
 
   // Modals & Forms
   const [epModalOpen, setEpModalOpen] = useState(false);
@@ -484,6 +516,26 @@ export default function PreventionHealingWorkspace() {
     }
   };
 
+  const handleCancelBatch = async (batchId) => {
+    try {
+      await preventionHealingApi.cancelImportBatch(batchId);
+      toast({
+        title: "Batch Cancelled",
+        description: "Import batch has been cancelled. Pending rows were dismissed with zero operational records created.",
+      });
+      if (analysisResult && analysisResult.batch_id === batchId) {
+        setAnalysisResult((prev) => ({ ...prev, status: "CANCELLED" }));
+      }
+      loadWorkspaceData();
+    } catch (err) {
+      toast({
+        title: "Cancellation Error",
+        description: err.message || "Failed to cancel import batch.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Filtered views
   const filteredEP = enhancementPrograms.filter(
     (p) =>
@@ -587,7 +639,7 @@ export default function PreventionHealingWorkspace() {
           <Button
             size="sm"
             onClick={() => setActiveTab("import_wizard")}
-            className="bg-amber-600 hover:bg-amber-700 text-white gap-2"
+            className="bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs text-xs font-semibold px-3.5 py-2 rounded-lg gap-2 transition-all"
           >
             <UploadCloud className="w-4 h-4" />
             Safe Excel Import
@@ -595,113 +647,184 @@ export default function PreventionHealingWorkspace() {
         </div>
       </div>
 
-      {/* ── Navigation Tabs ── */}
-      <div className="flex items-center gap-2 overflow-x-auto border-b border-border pb-2 text-sm font-medium">
-        <button
-          onClick={() => setActiveTab("overview")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "overview"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <PieChartIcon className="w-4 h-4" />
-          Overview & Metrics
-        </button>
+      {/* ── Modern Segmented Navigation Bar with Side Scroll Arrows ── */}
+      <div className="border-b border-border/70 pb-3">
+        <div className="flex items-center gap-2">
+          {/* Left Scroll Arrow */}
+          <button
+            type="button"
+            onClick={() => scrollTabs("left")}
+            disabled={!canScrollLeft}
+            className={`shrink-0 flex items-center justify-center w-8 h-10 rounded-xl border transition-all ${
+              canScrollLeft
+                ? "bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-slate-700 dark:text-zinc-200 shadow-xs hover:bg-slate-50 dark:hover:bg-zinc-700 hover:scale-105 active:scale-95 cursor-pointer"
+                : "bg-slate-100/50 dark:bg-zinc-800/40 border-slate-200/50 dark:border-zinc-800 text-slate-300 dark:text-zinc-600 cursor-not-allowed opacity-40"
+            }`}
+            title="Scroll tabs left"
+            aria-label="Scroll tabs left"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
 
-        <button
-          onClick={() => setActiveTab("enhancement_programs")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "enhancement_programs"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <Sparkles className="w-4 h-4" />
-          Enhancement Programs ({enhancementPrograms.length})
-        </button>
+          {/* Scrollable Tabs Bar */}
+          <div 
+            ref={tabsContainerRef}
+            onScroll={checkScroll}
+            className="bg-slate-100/90 dark:bg-zinc-800/80 p-1.5 rounded-xl border border-slate-200/80 dark:border-zinc-700/70 flex items-center gap-1.5 overflow-x-auto no-scrollbar shadow-xs scroll-smooth flex-1 min-w-0"
+            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          >
+            <button
+              onClick={() => setActiveTab("overview")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "overview"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <PieChartIcon className={`w-4 h-4 ${activeTab === "overview" ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"}`} />
+              <span>Overview & Metrics</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab("family_support")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "family_support"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <HeartHandshake className="w-4 h-4" />
-          Family Support Services ({familySupportRecords.length})
-        </button>
+            <button
+              onClick={() => setActiveTab("enhancement_programs")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "enhancement_programs"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <Sparkles className={`w-4 h-4 ${activeTab === "enhancement_programs" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />
+              <span>Enhancement Programs</span>
+              <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                activeTab === "enhancement_programs"
+                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-300/50 font-semibold"
+                  : "bg-muted text-muted-foreground border-transparent"
+              }`}>
+                {enhancementPrograms.length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab("other_nations")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "other_nations"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <Shield className="w-4 h-4" />
-          Other Nations / Eagle Nest ({otherNationsRecords.length})
-        </button>
+            <button
+              onClick={() => setActiveTab("family_support")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "family_support"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <HeartHandshake className={`w-4 h-4 ${activeTab === "family_support" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+              <span>Family Support Services</span>
+              <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                activeTab === "family_support"
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300/50 font-semibold"
+                  : "bg-muted text-muted-foreground border-transparent"
+              }`}>
+                {familySupportRecords.length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab("staff_onboarding")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "staff_onboarding"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          Staff Onboarding
-          {pendingStaffCount > 0 && (
-            <Badge variant="destructive" className="ml-1 text-[10px] px-1.5 py-0 h-4">
-              {pendingStaffCount} Pending
-            </Badge>
-          )}
-        </button>
+            <button
+              onClick={() => setActiveTab("other_nations")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "other_nations"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <Shield className={`w-4 h-4 ${activeTab === "other_nations" ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`} />
+              <span>Other Nations (Eagle Nest)</span>
+              <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                activeTab === "other_nations"
+                  ? "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-300/50 font-semibold"
+                  : "bg-muted text-muted-foreground border-transparent"
+              }`}>
+                {otherNationsRecords.length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab("client_reconciliation")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "client_reconciliation"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4" />
-          Client Reconciliation
-          {unresolvedClientsCount > 0 && (
-            <Badge variant="warning" className="ml-1 text-[10px] px-1.5 py-0 h-4 bg-amber-500 text-white">
-              {unresolvedClientsCount} Unresolved
-            </Badge>
-          )}
-        </button>
+            <button
+              onClick={() => setActiveTab("staff_onboarding")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "staff_onboarding"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <Users className={`w-4 h-4 ${activeTab === "staff_onboarding" ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"}`} />
+              <span>Staff Onboarding</span>
+              {pendingStaffCount > 0 ? (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-300/60 font-mono">
+                  {pendingStaffCount} Pending
+                </span>
+              ) : (
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                  {pendingStaffList.length}
+                </span>
+              )}
+            </button>
 
-        <button
-          onClick={() => setActiveTab("import_wizard")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "import_wizard"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <UploadCloud className="w-4 h-4" />
-          Excel Import Wizard
-        </button>
+            <button
+              onClick={() => setActiveTab("client_reconciliation")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "client_reconciliation"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <ShieldCheck className={`w-4 h-4 ${activeTab === "client_reconciliation" ? "text-teal-600 dark:text-teal-400" : "text-muted-foreground"}`} />
+              <span>Client Reconciliation</span>
+              {unresolvedClientsCount > 0 ? (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-800 dark:text-sky-300 border border-sky-300/60 font-mono">
+                  {unresolvedClientsCount} Unresolved
+                </span>
+              ) : (
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                  {clientRefsList.length}
+                </span>
+              )}
+            </button>
 
-        <button
-          onClick={() => setActiveTab("annual_summary")}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            activeTab === "annual_summary"
-              ? "bg-primary text-primary-foreground font-semibold"
-              : "text-muted-foreground hover:bg-muted"
-          }`}
-        >
-          <FileText className="w-4 h-4" />
-          Annual Summary & Audit
-        </button>
+            <button
+              onClick={() => setActiveTab("import_wizard")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "import_wizard"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <UploadCloud className={`w-4 h-4 ${activeTab === "import_wizard" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />
+              <span>Excel Import Wizard</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("annual_summary")}
+              className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-all select-none ${
+                activeTab === "annual_summary"
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-50 font-semibold shadow-xs border border-slate-200/90 dark:border-zinc-700 ring-1 ring-black/5"
+                  : "text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-white/60 dark:hover:bg-zinc-700/50"
+              }`}
+            >
+              <FileText className={`w-4 h-4 ${activeTab === "annual_summary" ? "text-purple-600 dark:text-purple-400" : "text-muted-foreground"}`} />
+              <span>Annual Summary & Audit</span>
+            </button>
+          </div>
+
+          {/* Right Scroll Arrow */}
+          <button
+            type="button"
+            onClick={() => scrollTabs("right")}
+            disabled={!canScrollRight}
+            className={`shrink-0 flex items-center justify-center w-8 h-10 rounded-xl border transition-all ${
+              canScrollRight
+                ? "bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-slate-700 dark:text-zinc-200 shadow-xs hover:bg-slate-50 dark:hover:bg-zinc-700 hover:scale-105 active:scale-95 cursor-pointer"
+                : "bg-slate-100/50 dark:bg-zinc-800/40 border-slate-200/50 dark:border-zinc-800 text-slate-300 dark:text-zinc-600 cursor-not-allowed opacity-40"
+            }`}
+            title="Scroll tabs right"
+            aria-label="Scroll tabs right"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* ───────────────────────────────────────────────────────────── */}
@@ -955,7 +1078,7 @@ export default function PreventionHealingWorkspace() {
             <Button
               size="sm"
               onClick={() => setEpModalOpen(true)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
+              className="bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs text-xs font-semibold px-3.5 py-2 rounded-lg gap-1.5 transition-all"
             >
               <Plus className="w-4 h-4" />
               New Enhancement Program
@@ -1053,7 +1176,7 @@ export default function PreventionHealingWorkspace() {
             <Button
               size="sm"
               onClick={() => setFsrModalOpen(true)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
+              className="bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs text-xs font-semibold px-3.5 py-2 rounded-lg gap-1.5 transition-all"
             >
               <Plus className="w-4 h-4" />
               New Family Support Record
@@ -1162,7 +1285,7 @@ export default function PreventionHealingWorkspace() {
             <Button
               size="sm"
               onClick={() => setOnsModalOpen(true)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
+              className="bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs text-xs font-semibold px-3.5 py-2 rounded-lg gap-1.5 transition-all"
             >
               <Plus className="w-4 h-4" />
               New Other Nations Record
@@ -1636,10 +1759,22 @@ export default function PreventionHealingWorkspace() {
                             : "Execute Import to Database"}
                         </Button>
                       )}
+
+                      {["AWAITING_APPROVAL", "APPROVED"].includes(analysisResult.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleCancelBatch(analysisResult.batch_id)}
+                          className="border-red-300 text-red-600 hover:bg-red-50 text-xs gap-1"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          Cancel Batch
+                        </Button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
                     <div className="p-3 bg-card border border-border rounded-lg">
                       <div className="text-xl font-bold font-mono">{analysisResult.total_rows_analyzed}</div>
                       <div className="text-[11px] text-muted-foreground">Total Rows Parsed</div>
@@ -1651,6 +1786,10 @@ export default function PreventionHealingWorkspace() {
                     <div className="p-3 bg-card border border-red-300 rounded-lg text-red-600">
                       <div className="text-xl font-bold font-mono">{analysisResult.invalid_rows}</div>
                       <div className="text-[11px]">Validation Rejections</div>
+                    </div>
+                    <div className="p-3 bg-card border border-amber-300 rounded-lg text-amber-700">
+                      <div className="text-xl font-bold font-mono">{analysisResult.duplicate_rows || 0}</div>
+                      <div className="text-[11px]">Duplicates Excluded</div>
                     </div>
                   </div>
 
@@ -1730,6 +1869,8 @@ export default function PreventionHealingWorkspace() {
                                   ? "text-blue-700 bg-blue-50 border-blue-300"
                                   : b.status === "AWAITING_APPROVAL"
                                   ? "text-amber-700 bg-amber-50 border-amber-300"
+                                  : b.status === "CANCELLED"
+                                  ? "text-red-700 bg-red-50 border-red-300"
                                   : "text-muted-foreground"
                               }`}
                             >
@@ -1758,6 +1899,16 @@ export default function PreventionHealingWorkspace() {
                                 className="h-6 text-[11px] bg-primary text-primary-foreground"
                               >
                                 {executingBatchId === b.id ? "Importing..." : "Execute"}
+                              </Button>
+                            )}
+                            {["AWAITING_APPROVAL", "APPROVED"].includes(b.status) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleCancelBatch(b.id)}
+                                className="h-6 text-[11px] border-red-200 text-red-600 hover:bg-red-50 ml-1.5"
+                              >
+                                Cancel
                               </Button>
                             )}
                           </td>

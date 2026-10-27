@@ -120,6 +120,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("crbcl_ph_real_import_enabled", "CRBCL_PH_REAL_IMPORT_ENABLED"),
         description="Master rollout control for Prevention & Healing real historical workbook import execution. Disabled by default.",
     )
+    crbcl_allow_synthetic_seeding: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("crbcl_allow_synthetic_seeding", "CRBCL_ALLOW_SYNTHETIC_SEEDING"),
+        description="Master authorization flag for synthetic staging dataset seeding. Must be explicitly enabled in non-production environments.",
+    )
+    crbcl_synthetic_test_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("crbcl_synthetic_test_password", "CRBCL_SYNTHETIC_TEST_PASSWORD"),
+        description="Secure externally supplied credential for synthetic test accounts in authorized non-production environments.",
+    )
 
     # ── Derived helpers ──────────────────────────────────────
     @property
