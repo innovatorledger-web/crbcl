@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/connectivity_service.dart';
 import '../services/db_helper.dart';
 import '../services/speech_service.dart';
+import '../services/sync_engine.dart';
 import '../services/theme_service.dart';
 
 class NoteDraftScreen extends StatefulWidget {
@@ -18,6 +20,7 @@ class _NoteDraftScreenState extends State<NoteDraftScreen> {
 
   bool _isRecording = false;
   bool _isTranscribing = false;
+  bool _isSaving = false;
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
 
@@ -105,6 +108,8 @@ class _NoteDraftScreenState extends State<NoteDraftScreen> {
       return;
     }
 
+    setState(() => _isSaving = true);
+
     final mutationId = 'note_${DateTime.now().millisecondsSinceEpoch}';
     final payload = {
       'case_id': widget.caseId ?? 'offline_case',
@@ -115,22 +120,53 @@ class _NoteDraftScreenState extends State<NoteDraftScreen> {
       'created_at': DateTime.now().toIso8601String(),
     };
 
-    await LocalDatabaseHelper.instance.saveDraft(
-      id: mutationId,
-      entityType: 'CASE_NOTE',
-      title: title,
-      subtitle: 'Case Note Draft • ${widget.caseId ?? "General"}',
-      payload: payload,
-    );
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Note draft saved to encrypted storage.'),
-          backgroundColor: CrbclTokens.statusSuccess,
-        ),
+    try {
+      await LocalDatabaseHelper.instance.saveDraft(
+        id: mutationId,
+        entityType: 'CASE_NOTE',
+        title: title,
+        subtitle: 'Case Note Draft • ${widget.caseId ?? "General"}',
+        payload: payload,
       );
-      Navigator.pop(context, true);
+
+      bool syncedOnline = false;
+      try {
+        final isOnline = await ConnectivityService.instance.checkConnectivity();
+        if (isOnline) {
+          final syncRes = await SyncEngine().pushPendingQueue();
+          if (syncRes.success && syncRes.syncedCount > 0) {
+            syncedOnline = true;
+          }
+        }
+      } catch (_) {}
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncedOnline
+                  ? 'Case note saved and synchronized with CRBCL platform!'
+                  : 'Note draft saved to encrypted offline storage.',
+            ),
+            backgroundColor: CrbclTokens.statusSuccess,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save note draft: ${e.toString()}'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -289,9 +325,11 @@ class _NoteDraftScreenState extends State<NoteDraftScreen> {
               const SizedBox(height: 10),
 
               ElevatedButton.icon(
-                onPressed: _isRecording || _isTranscribing ? null : _saveOfflineNote,
-                icon: const Icon(Icons.save),
-                label: const Text('Save Encrypted Note Draft'),
+                onPressed: _isRecording || _isTranscribing || _isSaving ? null : _saveOfflineNote,
+                icon: _isSaving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save),
+                label: Text(_isSaving ? 'Saving...' : 'Save Encrypted Note Draft'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: colorScheme.primary,
                   foregroundColor: colorScheme.onPrimary,

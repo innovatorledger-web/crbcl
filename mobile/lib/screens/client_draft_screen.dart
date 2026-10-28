@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/connectivity_service.dart';
 import '../services/db_helper.dart';
+import '../services/sync_engine.dart';
 import '../services/theme_service.dart';
 
 class ClientDraftScreen extends StatefulWidget {
@@ -99,24 +101,55 @@ class _ClientDraftScreenState extends State<ClientDraftScreen> {
       'notes': _notesController.text.trim(),
     };
 
-    await LocalDatabaseHelper.instance.saveDraft(
-      id: tempId,
-      entityType: 'CLIENT',
-      title: '$firstName $lastName',
-      subtitle: 'Draft Client • Treaty: ${_treatyController.text.trim().isNotEmpty ? _treatyController.text.trim() : "None"}',
-      payload: payload,
-    );
-
-    setState(() => _isSaving = false);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Saved offline draft for $firstName $lastName. Permanent ID will be assigned on sync.'),
-          backgroundColor: CrbclTokens.statusSuccess,
-        ),
+    try {
+      await LocalDatabaseHelper.instance.saveDraft(
+        id: tempId,
+        entityType: 'CLIENT',
+        title: '$firstName $lastName',
+        subtitle: 'Draft Client • Treaty: ${_treatyController.text.trim().isNotEmpty ? _treatyController.text.trim() : "None"}',
+        payload: payload,
       );
-      Navigator.pop(context, true);
+
+      bool syncedOnline = false;
+      try {
+        final isOnline = await ConnectivityService.instance.checkConnectivity();
+        if (isOnline) {
+          final syncRes = await SyncEngine().pushPendingQueue();
+          if (syncRes.success && syncRes.syncedCount > 0) {
+            syncedOnline = true;
+          }
+        }
+      } catch (_) {
+        // Safe offline preservation
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncedOnline
+                  ? 'Client $firstName $lastName saved and synchronized with CRBCL platform!'
+                  : 'Saved local draft for $firstName $lastName. Permanent ID will be assigned on sync.',
+            ),
+            backgroundColor: CrbclTokens.statusSuccess,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save client draft: ${e.toString()}'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 

@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/connectivity_service.dart';
 import '../services/db_helper.dart';
+import '../services/sync_engine.dart';
 import '../services/theme_service.dart';
 
 class IntakeDraftScreen extends StatefulWidget {
@@ -79,24 +81,53 @@ class _IntakeDraftScreenState extends State<IntakeDraftScreen> {
       'notes': _notesController.text.trim(),
     };
 
-    await LocalDatabaseHelper.instance.saveDraft(
-      id: tempId,
-      entityType: 'INTAKE',
-      title: summary.length > 40 ? '${summary.substring(0, 40)}...' : summary,
-      subtitle: 'Priority: $_priority • Method: $_receivedMethod • Date: ${DateFormat('yyyy-MM-dd').format(_receivedDate)}',
-      payload: payload,
-    );
-
-    setState(() => _isSaving = false);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Saved offline intake draft. Referral number (INT-YYYY-NNNNNN) will be assigned on sync.'),
-          backgroundColor: CrbclTokens.statusSuccess,
-        ),
+    try {
+      await LocalDatabaseHelper.instance.saveDraft(
+        id: tempId,
+        entityType: 'INTAKE',
+        title: summary.length > 40 ? '${summary.substring(0, 40)}...' : summary,
+        subtitle: 'Priority: $_priority • Method: $_receivedMethod • Date: ${DateFormat('yyyy-MM-dd').format(_receivedDate)}',
+        payload: payload,
       );
-      Navigator.pop(context, true);
+
+      bool syncedOnline = false;
+      try {
+        final isOnline = await ConnectivityService.instance.checkConnectivity();
+        if (isOnline) {
+          final syncRes = await SyncEngine().pushPendingQueue();
+          if (syncRes.success && syncRes.syncedCount > 0) {
+            syncedOnline = true;
+          }
+        }
+      } catch (_) {}
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              syncedOnline
+                  ? 'Intake referral saved and synchronized with CRBCL platform!'
+                  : 'Saved offline intake draft. Referral number (INT-YYYY-NNNNNN) will be assigned on sync.',
+            ),
+            backgroundColor: CrbclTokens.statusSuccess,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save intake draft: ${e.toString()}'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 

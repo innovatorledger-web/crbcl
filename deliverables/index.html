@@ -126,37 +126,72 @@
     <h1>CRBCL Mobile App v2</h1>
     <div class="subtitle">Field Operations & Offline Case Management</div>
 
-    <div class="qr-container">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=http://192.168.1.127:8088/" alt="Scan to Download on Phone" />
-      <div class="qr-label">Point phone camera to scan</div>
+    <div class="network-badge" id="network-badge" style="background: rgba(244, 162, 97, 0.15); border: 1px solid #F4A261; border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; text-align: left;">
+      <div style="font-weight: 600; color: #F4A261; margin-bottom: 4px;">📡 Local Wi-Fi Access:</div>
+      <div style="color: #fff; font-size: 13px;">Primary: <a id="primary-ip-link" href="http://192.168.1.177:8088/" style="color: #64B5F6; text-decoration: underline; font-weight: bold;">http://192.168.1.177:8088/</a> <span style="font-size: 11px; color: #81C784;">(Current Wi-Fi)</span></div>
+      <div style="color: #ccc; font-size: 12px; margin-top: 3px;">Alternate: <a id="alt-ip-link" href="http://192.168.1.127:8088/" style="color: #FFB74D; text-decoration: underline;">http://192.168.1.127:8088/</a></div>
     </div>
 
-    <a href="app-debug.apk" class="btn" download>⬇️ Download Latest APK (168.8 MB)</a>
+    <div class="qr-container">
+      <img id="qr-code-img" src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=http://192.168.1.177:8088/" alt="Scan to Download on Phone" />
+      <div class="qr-label" id="qr-label">Scan to open on phone: 192.168.1.177:8088</div>
+    </div>
+
+    <a href="app-debug.apk" class="btn" download>⬇️ Download Latest APK (163.1 MB)</a>
 
     <div class="changelog">
       <strong>✨ Verified Implementation Updates:</strong>
       <ul>
-        <li><b>Removed Raw Role Badges</b>: Removed <code>it_admin, executive_director, ceo</code> from the Profile and Navigation Drawer headers for a clean, professional profile display.</li>
-        <li><b>Admin PIN Isolated to IT Admin Portal</b>: Admin accounts can no longer use the standard login screen to enter or unlock with PIN. Admin Quick PIN unlock is strictly routed through the IT Admin Portal.</li>
-        <li><b>Full Interactive Departmental Hubs</b>: Clicking any department card now opens its full operational workspace with KPI cards, queue entries, filtering, and entry logger (no more inactive toast messages).</li>
-        <li><b>Comprehensive Mobile Admin Dashboard</b>: 3 dedicated tabs for 24 Department Hubs, Staff Access / User Management (approve/deactivate users, invite staff), and System Security Diagnostics.</li>
-        <li><b>Overflow Layout Resolved</b>: Fixed header layout overflow issues across all device form factors.</li>
+        <li><b>Resilient Dual-Layer Offline Storage</b>: Implemented encrypted SQLite (SQLCipher) backed by an in-memory & secure storage fallback engine so drafts are never lost even if native DB drivers encounter runtime sandbox constraints.</li>
+        <li><b>Unified Offline Drafts Manager</b>: Real-time syncing across Client, Intake, Field Visit, and Case Note draft screens with live status badges (Synced, Pending, Failed).</li>
+        <li><b>Safe Cascade Deletion</b>: Automatically purges orphan mutation queues and draft items upon case deletion to eliminate ghost sync records.</li>
+        <li><b>Full Interactive Departmental Hubs</b>: Clicking any department card opens its complete workspace with live KPI cards, queues, filtering, and activity logger.</li>
+        <li><b>Admin PIN Isolated to IT Admin Portal</b>: Admin accounts can no longer use the standard login screen to enter or unlock with PIN; routed strictly through IT Admin Portal.</li>
+        <li><b>Clean Profile Displays</b>: Raw role badges removed from headers; responsive overflow layout resolved across all mobile device form factors.</li>
       </ul>
     </div>
 
     <div class="instructions">
       <strong>Quick Install Steps:</strong>
       <ol>
-        <li>Connect phone to the same Wi-Fi network or open <code>http://192.168.1.127:8088/</code> in your mobile browser.</li>
+        <li>Connect phone to the same Wi-Fi network.</li>
+        <li>Open <code id="instruction-url">http://192.168.1.177:8088/</code> (or <code>http://192.168.1.127:8088/</code>) in your mobile browser, or scan the QR code above.</li>
         <li>Tap <b>Download Latest APK</b>.</li>
-        <li>Open the downloaded APK and tap <b>Install</b> (enable <i>Install unknown apps</i> if prompted).</li>
-        <li>Launch <b>CRBCL Field</b> to test all features!</li>
+        <li>Open the downloaded APK and tap <b>Install</b> (allow <i>Install unknown apps</i> if prompted by Android).</li>
+        <li>Launch <b>CRBCL Field</b> to test offline drafts and all platform features!</li>
       </ol>
     </div>
 
     <div class="meta">
-      Build: October 13, 2026 • SHA256: <code>39558a5f3ff1...</code>
+      Build: October 27, 2026 • SHA256: <code>dfdc19f304ebf64f9f0fbe5040f401d5833d2265825fe5b6a670b52d65adb5b3</code>
     </div>
   </div>
+
+  <script>
+    (function() {
+      var currentHost = window.location.hostname;
+      var currentPort = window.location.port || '8088';
+      var activeIp = '192.168.1.177';
+
+      if (currentHost && currentHost !== 'localhost' && currentHost !== '127.0.0.1' && currentHost !== '') {
+        activeIp = currentHost;
+      }
+
+      var fullUrl = 'http://' + activeIp + ':' + currentPort + '/';
+      var qrImg = document.getElementById('qr-code-img');
+      var qrLabel = document.getElementById('qr-label');
+      var instructionUrl = document.getElementById('instruction-url');
+
+      if (qrImg) {
+        qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=' + encodeURIComponent(fullUrl);
+      }
+      if (qrLabel) {
+        qrLabel.textContent = 'Scan to open on phone: ' + activeIp + ':' + currentPort;
+      }
+      if (instructionUrl) {
+        instructionUrl.textContent = fullUrl;
+      }
+    })();
+  </script>
 </body>
 </html>
