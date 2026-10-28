@@ -5,7 +5,13 @@ export const clientsApi = {
   get: (id) => api.entities.Client.get(id),
   create: (data) => api.entities.Client.create(data),
   update: (id, data) => api.patch(`/api/v1/clients/${id}`, data),
-  delete: (id) => api.entities.Client.delete(id),
+  delete: async (id) => {
+    try {
+      const res = await api.fetch(`/api/v1/clients/${id}`, { method: 'DELETE' });
+      if (res.ok || res.status === 204) return true;
+    } catch (_) {}
+    return api.entities.Client.delete(id);
+  },
 
   uploadPhoto: async (clientId, file) => {
     const formData = new FormData();

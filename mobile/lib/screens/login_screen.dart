@@ -175,7 +175,16 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    if (MobileAuthService.isEmailAdmin(_activeUserEmail)) {
+    final targetEmail = (_activeUserEmail?.isNotEmpty == true)
+        ? _activeUserEmail!
+        : _emailController.text.trim();
+
+    if (targetEmail.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your Staff Work Email to unlock with PIN.');
+      return;
+    }
+
+    if (MobileAuthService.isEmailAdmin(targetEmail)) {
       setState(() => _errorMessage = 'Administrator accounts cannot unlock standard field operations. Please use the IT Admin Portal.');
       return;
     }
@@ -185,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _errorMessage = null;
     });
 
-    final result = await _authService.unlockWithPin(pin, email: _activeUserEmail);
+    final result = await _authService.unlockWithPin(pin, email: targetEmail);
     setState(() => _isLoading = false);
 
     if (result.success) {
@@ -372,6 +381,130 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 16),
                           ],
 
+                          // Segmented Mode Switcher (Quick PIN Access vs Work Email & Password)
+                          if (!_isSettingUpPin) ...[
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 18),
+                              decoration: BoxDecoration(
+                                color: isDark ? Colors.black26 : const Color(0xFFECE7E1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isDark ? Colors.white12 : const Color(0xFFDDD7CF),
+                                ),
+                              ),
+                              padding: const EdgeInsets.all(4),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(9),
+                                      onTap: () {
+                                        setState(() {
+                                          _isOnlineLoginMode = false;
+                                          _errorMessage = null;
+                                        });
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(vertical: 9),
+                                        decoration: BoxDecoration(
+                                          color: !_isOnlineLoginMode
+                                              ? (isDark ? colorScheme.primary : Colors.white)
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(9),
+                                          boxShadow: !_isOnlineLoginMode
+                                              ? [
+                                                  BoxShadow(
+                                                    color: Colors.black.withValues(alpha: 0.08),
+                                                    blurRadius: 4,
+                                                    offset: const Offset(0, 2),
+                                                  )
+                                                ]
+                                              : null,
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.pin_outlined,
+                                              size: 16,
+                                              color: !_isOnlineLoginMode
+                                                  ? (isDark ? colorScheme.onPrimary : colorScheme.primary)
+                                                  : colorScheme.onSurface.withValues(alpha: 0.6),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'Quick PIN',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                color: !_isOnlineLoginMode
+                                                    ? (isDark ? colorScheme.onPrimary : colorScheme.primary)
+                                                    : colorScheme.onSurface.withValues(alpha: 0.7),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(9),
+                                      onTap: () {
+                                        setState(() {
+                                          _isOnlineLoginMode = true;
+                                          _errorMessage = null;
+                                        });
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(vertical: 9),
+                                        decoration: BoxDecoration(
+                                          color: _isOnlineLoginMode
+                                              ? (isDark ? colorScheme.primary : Colors.white)
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(9),
+                                          boxShadow: _isOnlineLoginMode
+                                              ? [
+                                                  BoxShadow(
+                                                    color: Colors.black.withValues(alpha: 0.08),
+                                                    blurRadius: 4,
+                                                    offset: const Offset(0, 2),
+                                                  )
+                                                ]
+                                              : null,
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.email_outlined,
+                                              size: 16,
+                                              color: _isOnlineLoginMode
+                                                  ? (isDark ? colorScheme.onPrimary : colorScheme.primary)
+                                                  : colorScheme.onSurface.withValues(alpha: 0.6),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'Work Email',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                color: _isOnlineLoginMode
+                                                    ? (isDark ? colorScheme.onPrimary : colorScheme.primary)
+                                                    : colorScheme.onSurface.withValues(alpha: 0.7),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+
                           // View Modes
                           if (_isSettingUpPin)
                             _buildPinSetupView()
@@ -456,8 +589,8 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: 8),
 
-        // User badge showing clearly which account is unlocking
-        if (emailDisplay.isNotEmpty)
+        // User badge showing clearly which account is unlocking, or email input if not saved
+        if (emailDisplay.isNotEmpty) ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -496,7 +629,21 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
+        ] else ...[
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+              labelText: 'Staff Work Email',
+              hintText: 'you@crbcl.ca',
+              prefixIcon: Icon(Icons.email_outlined),
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
 
         Text(
           'Enter your personal 6-digit Quick PIN',
@@ -541,25 +688,44 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              Icon(Icons.lock_open, size: 18),
-              SizedBox(width: 8),
-              Text('Unlock Vault', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            children: [
+              const Icon(Icons.lock_open, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                emailDisplay.isNotEmpty ? 'Unlock Vault' : 'Sign In with PIN',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
             ],
           ),
         ),
         const SizedBox(height: 14),
 
-        // Prominent Switch User Option
-        OutlinedButton.icon(
-          onPressed: _handleSwitchUser,
-          icon: const Icon(Icons.swap_horiz, size: 18),
-          label: const Text('Switch Account / Sign In with Credentials'),
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        // Switch Option
+        if (emailDisplay.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: _handleSwitchUser,
+            icon: const Icon(Icons.swap_horiz, size: 18),
+            label: const Text('Switch Account / Sign In with Credentials'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: () {
+              setState(() {
+                _isOnlineLoginMode = true;
+                _errorMessage = null;
+              });
+            },
+            icon: const Icon(Icons.password, size: 18),
+            label: const Text('Use Email & Password instead'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -710,6 +876,23 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Quick PIN button
+        OutlinedButton.icon(
+          onPressed: () {
+            setState(() {
+              _isOnlineLoginMode = false;
+              _errorMessage = null;
+            });
+          },
+          icon: const Icon(Icons.pin_outlined, size: 18),
+          label: const Text('Quick Sign In with 6-Digit PIN'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
         const SizedBox(height: 16),

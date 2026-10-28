@@ -1541,3 +1541,36 @@ async def get_client_timeline(
     timeline_service = TimelineService(db)
     events = await timeline_service.get_timeline_for_entity("client", client_id)
     return events
+
+
+@router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_client(
+    client_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin or authorized supervisor/director soft-deletes a client record."""
+    repo = ClientRepository(db)
+    client = await repo.get(client_id)
+    if not client or client.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "CLIENT_NOT_FOUND", "message": "Client record not found"}},
+        )
+
+    await repo.soft_delete(client)
+
+    audit_service = AuditService(db)
+    await audit_service.log_event(
+        event_type="CLIENT_DELETED",
+        user_id=user.id,
+        entity_type="client",
+        entity_id=client.id,
+        before_data={"first_name": client.first_name, "last_name": client.last_name, "status": client.status},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    await db.commit()
+    return None
+

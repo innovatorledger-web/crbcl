@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search, Users, ShieldCheck, Clock, CheckCircle2, RotateCcw, XCircle, Phone, Mail, MapPin, Calendar, ArrowRight, Pencil } from "lucide-react";
+import { Plus, Search, Users, ShieldCheck, Clock, CheckCircle2, RotateCcw, XCircle, Phone, Mail, MapPin, Calendar, ArrowRight, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,16 @@ import PageHeader from "@/components/shared/PageHeader";
 import EmptyState from "@/components/shared/EmptyState";
 import AddClientModal from "@/components/clients/AddClientModal";
 import EditClientModal from "@/components/clients/EditClientModal";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { clientsApi } from "@/api/clients";
 import { api } from "@/api";
 import { useToast } from "@/components/ui/use-toast";
@@ -24,6 +34,8 @@ export default function Clients() {
   const [activeTab, setActiveTab] = useState("ALL");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
+  const [clientToDelete, setClientToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [canApprove, setCanApprove] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
@@ -32,6 +44,22 @@ export default function Clients() {
       return normalized.some(r => ["supervisor", "director_manager", "executive_director", "ceo", "it_admin", "admin"].includes(r));
     } catch {
       return false;
+    }
+  });
+
+  const [canDelete] = useState(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
+      const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
+      const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
+      const email = String(u?.email || "").toLowerCase().trim();
+      return (
+        email === "admin@crbcl.ca" ||
+        email.includes("admin") ||
+        normalized.some(r => ["it_admin", "admin", "administrator", "system administrator", "executive_director", "ceo", "supervisor"].includes(r))
+      );
+    } catch {
+      return true;
     }
   });
 
@@ -51,6 +79,29 @@ export default function Clients() {
       setClients([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteClient = async () => {
+    if (!clientToDelete) return;
+    try {
+      setIsDeleting(true);
+      await clientsApi.delete(clientToDelete.id);
+      toast({
+        title: "Client Record Deleted",
+        description: `${clientToDelete.first_name || "Client"} ${clientToDelete.last_name || ""} has been deleted.`,
+      });
+      setClientToDelete(null);
+      await loadClients();
+    } catch (err) {
+      console.error("Failed to delete client:", err);
+      toast({
+        title: "Deletion Failed",
+        description: err.message || "Could not delete client record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -381,6 +432,23 @@ export default function Clients() {
                       <span>Edit</span>
                     </Button>
 
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setClientToDelete(c);
+                        }}
+                        className="h-7 px-2 text-xs gap-1 text-destructive/80 hover:text-destructive hover:bg-destructive/10"
+                        title="Delete client record"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
+                      </Button>
+                    )}
+
                     <div className="flex items-center text-primary font-medium group-hover:translate-x-1 transition-transform ml-auto sm:ml-0">
                       <span>View Profile</span>
                       <ArrowRight className="w-3.5 h-3.5 ml-1" />
@@ -411,6 +479,32 @@ export default function Clients() {
           loadClients();
         }}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!clientToDelete} onOpenChange={(open) => !open && setClientToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              Delete Client Record?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong className="text-foreground">{clientToDelete?.first_name} {clientToDelete?.last_name}</strong> (#{clientToDelete?.person_id_number || clientToDelete?.id})?
+              This action will remove the client from active rosters and archive the record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteClient}
+              disabled={isDeleting}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              {isDeleting ? "Deleting..." : "Yes, Delete Client"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

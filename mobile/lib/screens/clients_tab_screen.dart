@@ -1,7 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import '../services/auth_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/db_helper.dart';
 import '../services/theme_service.dart';
-import '../widgets/status_badge.dart';
+import 'client_draft_screen.dart';
 
 class ClientsTabScreen extends StatefulWidget {
   final VoidCallback onOpenDrawer;
@@ -14,9 +18,14 @@ class ClientsTabScreen extends StatefulWidget {
 
 class _ClientsTabScreenState extends State<ClientsTabScreen> {
   final _dbHelper = LocalDatabaseHelper.instance;
+  final _authService = MobileAuthService.instance;
+
   bool _isLoading = true;
-  List<Map<String, dynamic>> _clientDrafts = [];
   String _searchQuery = '';
+  String _activeFilter = 'ALL'; // ALL, APPROVED, PENDING, OFFLINE
+
+  List<Map<String, dynamic>> _clients = [];
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -25,15 +34,497 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
   }
 
   Future<void> _loadClients() async {
-    setState(() => _isLoading = true);
-    final allDrafts = await _dbHelper.getAllDrafts();
-    final clientDrafts = allDrafts.where((d) => d['entity_type'] == 'CLIENT').toList();
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    final isOnline = await ConnectivityService.instance.checkConnectivity();
+
+    final List<Map<String, dynamic>> combinedList = [];
+
+    // 1. Fetch Local Drafts from SQLite
+    try {
+      final allDrafts = await _dbHelper.getAllDrafts();
+      final clientDrafts = allDrafts.where((d) => d['entity_type'] == 'CLIENT').toList();
+      for (final draft in clientDrafts) {
+        final payload = draft['payload'] is Map<String, dynamic>
+            ? draft['payload'] as Map<String, dynamic>
+            : (draft['payload'] is String ? jsonDecode(draft['payload']) : <String, dynamic>{});
+
+        final titleParts = (draft['title']?.toString() ?? '').trim().split(' ');
+        final draftFirst = titleParts.isNotEmpty && titleParts.first.isNotEmpty ? titleParts.first : 'Draft';
+        final draftLast = titleParts.length > 1 ? titleParts.sublist(1).join(' ') : 'Client';
+
+        combinedList.add({
+          'id': draft['id'],
+          'is_remote': false,
+          'first_name': payload['first_name'] ?? draftFirst,
+          'last_name': payload['last_name'] ?? draftLast,
+          'person_id_number': draft['person_id_number'] ?? 'DRAFT-${draft['id']?.toString().substring(0, 8)}',
+          'approval_status': 'PENDING_APPROVAL',
+          'status': 'Offline Draft',
+          'risk_level': payload['risk_level'] ?? 'Low',
+          'band_nation': payload['band_nation'] ?? 'Cote First Nation',
+          'city': payload['city'] ?? 'Regina',
+          'province': payload['province'] ?? 'SK',
+          'date_of_birth': payload['date_of_birth'],
+          'phone': payload['phone'],
+          'email': payload['email'],
+          'photo_url': payload['photo_path'],
+          'submission_notes': payload['notes'],
+          'raw_payload': payload,
+          'sync_status': draft['sync_status'] ?? 'PENDING',
+        });
+      }
+    } catch (e) {
+      // Local SQLite read warning
+    }
+
+    // 2. Fetch Central Platform Clients if online
+    if (isOnline) {
+      try {
+        final serverUrl = (await _authService.getServerUrl()).replaceAll(RegExp(r'/+$'), '');
+        final token = await _authService.getAccessToken();
+
+        if (token != null && token.isNotEmpty) {
+          final uri = Uri.parse('$serverUrl/api/v1/clients?limit=100');
+          final response = await http.get(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          ).timeout(const Duration(seconds: 15));
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final items = data is Map && data['items'] is List
+                ? data['items'] as List
+                : (data is List ? data : []);
+
+            for (final item in items) {
+              if (item is Map) {
+                final mapItem = Map<String, dynamic>.from(item);
+                combinedList.add({
+                  'id': mapItem['id'],
+                  'is_remote': true,
+                  'first_name': mapItem['first_name'] ?? '',
+                  'last_name': mapItem['last_name'] ?? '',
+                  'middle_name': mapItem['middle_name'],
+                  'preferred_name': mapItem['preferred_name'],
+                  'aliases': mapItem['aliases'],
+                  'person_id': mapItem['person_id'],
+                  'person_id_number': mapItem['person_id_number'] ?? 'PENDING-ID',
+                  'approval_status': (mapItem['approval_status'] ?? 'APPROVED').toString().toUpperCase(),
+                  'status': mapItem['status'] ?? 'Active',
+                  'risk_level': mapItem['risk_level'] ?? 'Low',
+                  'band_nation': mapItem['band_nation'] ?? 'First Nations',
+                  'city': mapItem['city'] ?? 'Regina',
+                  'province': mapItem['province'] ?? 'SK',
+                  'date_of_birth': mapItem['date_of_birth'],
+                  'gender': mapItem['gender'],
+                  'phone': mapItem['phone'],
+                  'email': mapItem['email'],
+                  'photo_url': mapItem['photo_url'],
+                  'submission_notes': mapItem['submission_notes'],
+                  'submitted_by_name': mapItem['submitted_by_name'],
+                  'decided_by_name': mapItem['decided_by_name'],
+                  'raw_payload': mapItem,
+                  'sync_status': 'SYNCED',
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        _errorMessage = 'Could not load platform clients: $err';
+      }
+    }
+
     if (mounted) {
       setState(() {
-        _clientDrafts = clientDrafts;
+        _clients = combinedList;
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _deleteClient(Map<String, dynamic> client) async {
+    final clientName = '${client['first_name']} ${client['last_name']}';
+    final clientId = client['id']?.toString() ?? '';
+    final isRemote = client['is_remote'] == true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.delete_forever, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete Client Record?'),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete $clientName (#${client['person_id_number']})?\n\n'
+          '${isRemote ? "This will soft-delete the record on the CRBCL central platform." : "This will remove the local offline draft."}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      if (isRemote) {
+        final serverUrl = (await _authService.getServerUrl()).replaceAll(RegExp(r'/+$'), '');
+        final token = await _authService.getAccessToken();
+
+        if (token != null && token.isNotEmpty) {
+          final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId');
+          final response = await http.delete(
+            uri,
+            headers: {'Authorization': 'Bearer $token'},
+          ).timeout(const Duration(seconds: 15));
+
+          if (response.statusCode != 200 && response.statusCode != 204) {
+            throw Exception('Failed with status code ${response.statusCode}');
+          }
+        }
+      } else {
+        await _dbHelper.deleteDraft(clientId);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Client $clientName successfully deleted.'),
+            backgroundColor: CrbclTokens.statusSuccess,
+          ),
+        );
+      }
+      await _loadClients();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete client: $e'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _viewClientProfile(Map<String, dynamic> client) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final clientName = '${client['first_name']} ${client['last_name']}';
+    final personIdNumber = client['person_id_number'] ?? 'PENDING-ID';
+    final status = client['approval_status'] ?? 'APPROVED';
+    final raw = client['raw_payload'] as Map<String, dynamic>? ?? {};
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (_, scrollController) => Scaffold(
+          appBar: AppBar(
+            title: Text(clientName),
+            leading: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: 'Edit Client',
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _editClient(client);
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                tooltip: 'Delete Client',
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _deleteClient(client);
+                },
+              ),
+            ],
+          ),
+          body: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header Profile Info
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 36,
+                      backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
+                      backgroundImage: client['photo_url'] != null && client['photo_url'].toString().startsWith('http')
+                          ? NetworkImage(client['photo_url'])
+                          : null,
+                      child: client['photo_url'] == null || !client['photo_url'].toString().startsWith('http')
+                          ? Text(
+                              '${client['first_name']?.toString().isNotEmpty == true ? client['first_name'][0] : ""}${client['last_name']?.toString().isNotEmpty == true ? client['last_name'][0] : ""}',
+                              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colorScheme.primary),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            clientName,
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: colorScheme.outlineVariant),
+                                ),
+                                child: Text(
+                                  '#$personIdNumber',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                                ),
+                              ),
+                              _buildApprovalBadge(status),
+                              _buildRiskBadge(client['risk_level'] ?? 'Low'),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${client['band_nation'] ?? "First Nations"} • ${client['city'] ?? "Regina"}, ${client['province'] ?? "SK"}',
+                            style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.7)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                const Divider(),
+
+                // Demographics & Contact Card
+                _buildProfileSection(
+                  title: 'Demographics & Contact Information',
+                  icon: Icons.person_pin_outlined,
+                  colorScheme: colorScheme,
+                  items: [
+                    {'label': 'Legal Name', 'value': '$clientName ${raw['middle_name'] != null ? "(${raw['middle_name']})" : ""}'},
+                    {'label': 'Preferred / Alias', 'value': raw['preferred_name'] ?? raw['aliases'] ?? 'None'},
+                    {'label': 'Date of Birth', 'value': client['date_of_birth'] ?? 'Not recorded'},
+                    {'label': 'Gender Identity', 'value': client['gender'] ?? raw['gender'] ?? 'Not specified'},
+                    {'label': 'Phone Number', 'value': client['phone'] ?? 'None on file'},
+                    {'label': 'Email Address', 'value': client['email'] ?? 'None on file'},
+                    {'label': 'Primary Residence', 'value': '${raw['primary_address']?['address_line_1'] ?? raw['address'] ?? "Regina"}, ${client['city'] ?? "Regina"}, ${client['province'] ?? "SK"}'},
+                    {'label': 'Emergency Contact', 'value': raw['emergency_contact_name'] != null ? '${raw['emergency_contact_name']} (${raw['emergency_contact_phone'] ?? "No phone"})' : 'None listed'},
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+                // Indigenous & Cultural Profile
+                _buildProfileSection(
+                  title: 'Indigenous Profile & Cultural Roots',
+                  icon: Icons.flag_outlined,
+                  colorScheme: colorScheme,
+                  items: [
+                    {'label': 'Band / Nation', 'value': client['band_nation'] ?? 'Cote First Nation'},
+                    {'label': 'Treaty / Status Card #', 'value': raw['treaty_number'] ?? 'None recorded'},
+                    {'label': 'Indigenous Identity', 'value': raw['indigenous_identity'] ?? 'First Nations'},
+                    {'label': 'Cultural Connections', 'value': raw['cultural_profile']?['cultural_connections'] ?? 'None recorded'},
+                    {'label': 'Ceremonies', 'value': raw['cultural_profile']?['ceremonies'] ?? 'None recorded'},
+                    {'label': 'Elders Connected', 'value': raw['cultural_profile']?['elders_connected'] ?? 'None recorded'},
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+                // Health & Physical Profile
+                _buildProfileSection(
+                  title: 'Health & Identifying Features',
+                  icon: Icons.medical_services_outlined,
+                  colorScheme: colorScheme,
+                  items: [
+                    {'label': 'Health Services Card (HSN)', 'value': raw['health_card_number'] ?? 'Not provided'},
+                    {'label': 'Height / Weight', 'value': '${raw['physical_description']?['height_cm'] != null ? "${raw['physical_description']['height_cm']} cm" : "--"} / ${raw['physical_description']?['weight_kg'] != null ? "${raw['physical_description']['weight_kg']} kg" : "--"}'},
+                    {'label': 'Eye / Hair Colour', 'value': '${raw['physical_description']?['eye_colour'] ?? "--"} / ${raw['physical_description']?['hair_colour'] ?? "--"}'},
+                    {'label': 'Marks & Tattoos', 'value': raw['physical_description']?['distinguishing_marks'] ?? 'None flagged'},
+                  ],
+                ),
+
+                if (client['submission_notes'] != null && client['submission_notes'].toString().isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: colorScheme.outlineVariant),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Submission Rationale & Field Notes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        Text(client['submission_notes'].toString(), style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileSection({
+    required String title,
+    required IconData icon,
+    required ColorScheme colorScheme,
+    required List<Map<String, String>> items,
+  }) {
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 16, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: colorScheme.primary),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...items.map((it) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 130,
+                        child: Text(
+                          it['label']!,
+                          style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.6)),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          it['value']!,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editClient(Map<String, dynamic> client) async {
+    final updated = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ClientDraftScreen(initialClient: client['raw_payload'] ?? client),
+      ),
+    );
+    if (updated == true) {
+      _loadClients();
+    }
+  }
+
+  Widget _buildApprovalBadge(String status) {
+    Color bg = CrbclTokens.statusSuccess.withValues(alpha: 0.15);
+    Color fg = CrbclTokens.statusSuccess;
+    String label = 'Approved';
+
+    if (status == 'PENDING_APPROVAL' || status == 'PENDING') {
+      bg = Colors.amber.withValues(alpha: 0.15);
+      fg = Colors.amber.shade800;
+      label = 'Pending Review';
+    } else if (status == 'RETURNED') {
+      bg = Colors.orange.withValues(alpha: 0.15);
+      fg = Colors.orange.shade800;
+      label = 'Returned';
+    } else if (status == 'DECLINED') {
+      bg = Colors.red.withValues(alpha: 0.15);
+      fg = Colors.red.shade700;
+      label = 'Declined';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(5)),
+      child: Text(label, style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildRiskBadge(String risk) {
+    Color bg = Colors.blue.withValues(alpha: 0.12);
+    Color fg = Colors.blue.shade800;
+    final r = risk.toUpperCase();
+
+    if (r.contains('HIGH')) {
+      bg = Colors.red.withValues(alpha: 0.15);
+      fg = Colors.red.shade800;
+    } else if (r.contains('MED')) {
+      bg = Colors.orange.withValues(alpha: 0.15);
+      fg = Colors.orange.shade800;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(5)),
+      child: Text('$risk Risk', style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
   }
 
   @override
@@ -42,11 +533,22 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    final filtered = _clientDrafts.where((d) {
-      if (_searchQuery.isEmpty) return true;
-      final title = (d['title'] as String? ?? '').toLowerCase();
-      final sub = (d['subtitle'] as String? ?? '').toLowerCase();
-      return title.contains(_searchQuery.toLowerCase()) || sub.contains(_searchQuery.toLowerCase());
+    final filtered = _clients.where((c) {
+      // Filter tab
+      if (_activeFilter == 'APPROVED' && c['approval_status'] != 'APPROVED') return false;
+      if (_activeFilter == 'PENDING' && c['approval_status'] != 'PENDING_APPROVAL') return false;
+      if (_activeFilter == 'OFFLINE' && c['is_remote'] == true) return false;
+
+      // Search query
+      if (_searchQuery.trim().isEmpty) return true;
+      final q = _searchQuery.toLowerCase();
+      final name = '${c['first_name']} ${c['last_name']}'.toLowerCase();
+      final pid = (c['person_id_number'] ?? '').toString().toLowerCase();
+      final nation = (c['band_nation'] ?? '').toString().toLowerCase();
+      final email = (c['email'] ?? '').toString().toLowerCase();
+      final phone = (c['phone'] ?? '').toString().toLowerCase();
+
+      return name.contains(q) || pid.contains(q) || nation.contains(q) || email.contains(q) || phone.contains(q);
     }).toList();
 
     return Scaffold(
@@ -60,7 +562,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
+            tooltip: 'Refresh Clients',
             onPressed: _loadClients,
           ),
         ],
@@ -87,45 +589,77 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                   children: [
                     // Search box
                     TextField(
-                      decoration: const InputDecoration(
-                        hintText: 'Search local client drafts...',
-                        prefixIcon: Icon(Icons.search),
+                      decoration: InputDecoration(
+                        hintText: 'Search by name, #ID, nation, email, phone...',
+                        prefixIcon: const Icon(Icons.search),
                         isDense: true,
+                        filled: true,
+                        fillColor: isDark ? colorScheme.surfaceContainerHighest : Colors.white,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                       onChanged: (val) => setState(() => _searchQuery = val),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
 
-                    // Information note
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: colorScheme.primary.withValues(alpha: 0.2),
-                          width: 1,
-                        ),
-                      ),
+                    // Filter Chips Row
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
-                          Icon(Icons.info_outline, size: 18, color: colorScheme.primary),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Offline Client Registry: New clients drafted in the field receive permanent CRBCL identifiers upon server synchronization.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colorScheme.onSurface.withValues(alpha: 0.8),
-                              ),
-                            ),
+                          ChoiceChip(
+                            label: Text('All (${_clients.length})'),
+                            selected: _activeFilter == 'ALL',
+                            onSelected: (_) => setState(() => _activeFilter = 'ALL'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: Text('Approved (${_clients.where((c) => c['approval_status'] == 'APPROVED').length})'),
+                            selected: _activeFilter == 'APPROVED',
+                            onSelected: (_) => setState(() => _activeFilter = 'APPROVED'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: Text('Pending (${_clients.where((c) => c['approval_status'] == 'PENDING_APPROVAL').length})'),
+                            selected: _activeFilter == 'PENDING',
+                            onSelected: (_) => setState(() => _activeFilter = 'PENDING'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: Text('Offline Drafts (${_clients.where((c) => c['is_remote'] == false).length})'),
+                            selected: _activeFilter == 'OFFLINE',
+                            onSelected: (_) => setState(() => _activeFilter = 'OFFLINE'),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
 
-                    // Client Drafts List
+                    // Error warning if any
+                    if (_errorMessage != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade700),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.wifi_off, size: 16, color: Colors.amber.shade800),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // Empty State
                     if (filtered.isEmpty)
                       Card(
                         shape: RoundedRectangleBorder(
@@ -147,9 +681,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                _searchQuery.isEmpty
-                                    ? 'No local client drafts found'
-                                    : 'No clients matching "$_searchQuery"',
+                                _searchQuery.isEmpty ? 'No clients found' : 'No clients matching "$_searchQuery"',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
@@ -158,7 +690,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                'Tap "+ Register Client" below to draft a Person & Client registration offline.',
+                                'Tap "+ Register Client" to record a new client record.',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: colorScheme.onSurface.withValues(alpha: 0.5),
@@ -174,13 +706,13 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: filtered.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
                         itemBuilder: (context, index) {
-                          final draft = filtered[index];
-                          final title = draft['title'] as String? ?? 'Client Draft';
-                          final subtitle = draft['subtitle'] as String? ?? '';
-                          final status = draft['sync_status'] as String? ?? 'PENDING';
-                          final personIdNumber = draft['person_id_number'] as String?;
+                          final client = filtered[index];
+                          final clientName = '${client['first_name']} ${client['last_name']}';
+                          final personIdNumber = client['person_id_number'] ?? 'PENDING-ID';
+                          final status = client['approval_status'] ?? 'APPROVED';
+                          final isRemote = client['is_remote'] == true;
 
                           return Card(
                             shape: RoundedRectangleBorder(
@@ -196,68 +728,143 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  // Top Row: Avatar + Name + Badges
                                   Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       CircleAvatar(
-                                        radius: 18,
+                                        radius: 20,
                                         backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
-                                        child: Icon(Icons.person, size: 20, color: colorScheme.primary),
+                                        backgroundImage: client['photo_url'] != null && client['photo_url'].toString().startsWith('http')
+                                            ? NetworkImage(client['photo_url'])
+                                            : null,
+                                        child: client['photo_url'] == null || !client['photo_url'].toString().startsWith('http')
+                                            ? Text(
+                                                '${client['first_name']?.toString().isNotEmpty == true ? client['first_name'][0] : ""}${client['last_name']?.toString().isNotEmpty == true ? client['last_name'][0] : ""}',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: colorScheme.primary,
+                                                  fontSize: 13,
+                                                ),
+                                              )
+                                            : null,
                                       ),
                                       const SizedBox(width: 10),
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            Text(
-                                              title,
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                                color: colorScheme.onSurface,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            if (subtitle.isNotEmpty)
-                                              Text(
-                                                subtitle,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: colorScheme.onSurface.withValues(alpha: 0.6),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    clientName,
+                                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
                                                 ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
+                                                _buildApprovalBadge(status),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Wrap(
+                                              spacing: 6,
+                                              runSpacing: 4,
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: colorScheme.surfaceContainerHighest,
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                                                  ),
+                                                  child: Text(
+                                                    '#$personIdNumber',
+                                                    style: const TextStyle(fontSize: 10, fontFamily: 'monospace', fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                                _buildRiskBadge(client['risk_level'] ?? 'Low'),
+                                                if (!isRemote)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.blue.withValues(alpha: 0.12),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: const Text('Offline Draft', style: TextStyle(fontSize: 10, color: Colors.blue)),
+                                                  ),
+                                              ],
+                                            ),
                                           ],
                                         ),
                                       ),
-                                      StatusBadge(status: status, compact: true),
                                     ],
                                   ),
-                                  if (personIdNumber != null) ...[
-                                    const SizedBox(height: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: CrbclTokens.statusSuccess.withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        'Permanent ID: $personIdNumber',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          color: CrbclTokens.statusSuccess,
-                                        ),
-                                      ),
+
+                                  // Location & Metadata
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    '${client['band_nation'] ?? "First Nations"} • ${client['city'] ?? "Regina"}, ${client['province'] ?? "SK"}',
+                                    style: TextStyle(fontSize: 12, color: colorScheme.onSurface.withValues(alpha: 0.7)),
+                                  ),
+
+                                  if (client['date_of_birth'] != null || client['phone'] != null) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'DOB: ${client['date_of_birth'] ?? "Unknown"} ${client['phone'] != null ? "• ${client['phone']}" : ""}',
+                                      style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.55)),
                                     ),
                                   ],
+
+                                  // Action Bar: Delete, Edit, View Profile
+                                  const SizedBox(height: 12),
+                                  const Divider(height: 1),
+                                  const SizedBox(height: 8),
+
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      // Delete Button
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                                        tooltip: 'Delete Client Record',
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: () => _deleteClient(client),
+                                      ),
+
+                                      // Edit and View Profile Buttons
+                                      Row(
+                                        children: [
+                                          TextButton.icon(
+                                            onPressed: () => _editClient(client),
+                                            icon: const Icon(Icons.edit_outlined, size: 16),
+                                            label: const Text('Edit', style: TextStyle(fontSize: 12)),
+                                            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          ElevatedButton.icon(
+                                            onPressed: () => _viewClientProfile(client),
+                                            icon: const Icon(Icons.arrow_forward, size: 14),
+                                            label: const Text('View Profile', style: TextStyle(fontSize: 12)),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: colorScheme.primary,
+                                              foregroundColor: colorScheme.onPrimary,
+                                              visualDensity: VisualDensity.compact,
+                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),
                           );
                         },
                       ),
+                    const SizedBox(height: 40),
                   ],
                 ),
               ),

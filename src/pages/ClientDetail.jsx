@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi, casesApi } from '@/api';
@@ -24,11 +24,24 @@ import {
   Activity,
   Pencil,
   Camera,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/components/ui/use-toast";
 import ClientEpisodesTab from "@/components/placements/ClientEpisodesTab";
 import EditClientModal from "@/components/clients/EditClientModal";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function ClientDetail() {
 
@@ -39,6 +52,53 @@ export default function ClientDetail() {
 
   const [activeTab, setActiveTab] = useState("overview");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const tabsScrollRef = useRef(null);
+
+  const [canDelete] = useState(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
+      const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
+      const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
+      const email = String(u?.email || "").toLowerCase().trim();
+      return (
+        email === "admin@crbcl.ca" ||
+        email.includes("admin") ||
+        normalized.some(r => ["it_admin", "admin", "administrator", "system administrator", "executive_director", "ceo", "supervisor"].includes(r))
+      );
+    } catch {
+      return true;
+    }
+  });
+
+  const scrollTabs = (direction) => {
+    if (tabsScrollRef.current) {
+      const offset = direction === 'left' ? -240 : 240;
+      tabsScrollRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
+
+  const handleDeleteClient = async () => {
+    try {
+      setIsDeleting(true);
+      await clientsApi.delete(id);
+      toast({
+        title: "Client Record Deleted",
+        description: `Client record has been successfully removed.`,
+      });
+      navigate("/clients");
+    } catch (err) {
+      toast({
+        title: "Deletion Failed",
+        description: err.message || "Could not delete client record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+      setIsDeleteDialogOpen(false);
+    }
+  };
 
   // Form states for modals/sub-resources
   const [newAllergy, setNewAllergy] = useState({ allergen: '', reaction: '', severity: 'Moderate' });
@@ -202,6 +262,16 @@ export default function ClientDetail() {
                 <FileText className="w-4 h-4 mr-1.5" /> View Cases
               </Link>
             </Button>
+            {canDelete && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsDeleteDialogOpen(true)}
+                className="gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+              >
+                <Trash2 className="w-4 h-4" /> Delete Record
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -229,25 +299,53 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {/* 14-Tab Detail Workspace */}
+      {/* 14-Tab Detail Workspace (Single-line straight track with scroll arrows) */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="bg-muted/60 p-1 h-auto flex flex-wrap gap-1">
-            <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
-            <TabsTrigger value="basic" className="text-xs">Basic Info</TabsTrigger>
-            <TabsTrigger value="physical" className="text-xs">Physical Description</TabsTrigger>
-            <TabsTrigger value="medical" className="text-xs">Medical Profile</TabsTrigger>
-            <TabsTrigger value="medications" className="text-xs">Medications</TabsTrigger>
-            <TabsTrigger value="providers" className="text-xs">Providers</TabsTrigger>
-            <TabsTrigger value="schools" className="text-xs">School / Daycare</TabsTrigger>
-            <TabsTrigger value="characteristics" className="text-xs">Characteristics</TabsTrigger>
-            <TabsTrigger value="cultural" className="text-xs">Cultural Connections</TabsTrigger>
-            <TabsTrigger value="family" className="text-xs">Family</TabsTrigger>
-            <TabsTrigger value="timeline" className="text-xs">Sacred Timeline</TabsTrigger>
-            <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>
-            <TabsTrigger value="alerts" className="text-xs">Alerts</TabsTrigger>
-            <TabsTrigger value="history" className="text-xs">Episodes & History</TabsTrigger>
-          </TabsList>
+        <div className="relative flex items-center bg-muted/60 p-1 rounded-xl border border-border/60">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 rounded-lg hover:bg-background/80 text-muted-foreground hover:text-foreground shadow-2xs"
+            onClick={() => scrollTabs('left')}
+            aria-label="Scroll tabs left"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+
+          <div
+            ref={tabsScrollRef}
+            className="flex-1 overflow-x-auto scrollbar-none scroll-smooth py-0.5 px-1.5"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            <TabsList className="bg-transparent p-0 h-auto flex flex-nowrap shrink-0 gap-1.5">
+              <TabsTrigger value="overview" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Overview</TabsTrigger>
+              <TabsTrigger value="basic" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Basic Info</TabsTrigger>
+              <TabsTrigger value="physical" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Physical Description</TabsTrigger>
+              <TabsTrigger value="medical" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Medical Profile</TabsTrigger>
+              <TabsTrigger value="medications" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Medications</TabsTrigger>
+              <TabsTrigger value="providers" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Providers</TabsTrigger>
+              <TabsTrigger value="schools" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">School / Daycare</TabsTrigger>
+              <TabsTrigger value="characteristics" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Characteristics</TabsTrigger>
+              <TabsTrigger value="cultural" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Cultural Connections</TabsTrigger>
+              <TabsTrigger value="family" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Family</TabsTrigger>
+              <TabsTrigger value="timeline" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Sacred Timeline</TabsTrigger>
+              <TabsTrigger value="documents" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Documents</TabsTrigger>
+              <TabsTrigger value="alerts" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Alerts</TabsTrigger>
+              <TabsTrigger value="history" className="text-xs shrink-0 whitespace-nowrap data-[state=active]:bg-background data-[state=active]:shadow-xs">Episodes & History</TabsTrigger>
+            </TabsList>
+          </div>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 rounded-lg hover:bg-background/80 text-muted-foreground hover:text-foreground shadow-2xs"
+            onClick={() => scrollTabs('right')}
+            aria-label="Scroll tabs right"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
         </div>
 
         {/* Tab 1: Overview */}
@@ -661,6 +759,32 @@ export default function ClientDetail() {
           queryClient.invalidateQueries({ queryKey: ['clients'] });
         }}
       />
+
+      {/* Delete Client Confirmation Modal */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              Delete Client Record?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong className="text-foreground">{client?.first_name} {client?.last_name}</strong> (#{client?.person_id_number || client?.id})?
+              This action will archive/soft-delete the record and remove it from active intake and client rosters.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteClient}
+              disabled={isDeleting}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              {isDeleting ? "Deleting..." : "Yes, Delete Client"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );
