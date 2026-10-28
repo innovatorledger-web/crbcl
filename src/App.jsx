@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import UserNotRegisteredError from '@/components/auth/UserNotRegisteredError';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import AdminProtectedRoute from '@/components/auth/AdminProtectedRoute';
 
 // Auth pages
 import Login from '@/pages/Login';
@@ -23,6 +24,7 @@ import BoardDashboard from '@/pages/BoardDashboard';
 
 // Layout
 import AppLayout from '@/components/layout/AppLayout';
+import AdminLayout from '@/components/layout/AdminLayout';
 
 // Phase 3 Intake & Referrals
 import IntakeList from '@/pages/IntakeList';
@@ -166,8 +168,8 @@ const AuthenticatedApp = () => {
         <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* Dedicated Admin Portal Routes (Exclusively for IT Admins / System Admins) */}
-        <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/admin/login" replace />} />}>
-          <Route element={<AppLayout />}>
+        <Route element={<AdminProtectedRoute />}>
+          <Route element={<AdminLayout />}>
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/integrations" element={<AdminIntegrations />} />
             <Route path="/admin/terminology" element={<AdminTerminology />} />

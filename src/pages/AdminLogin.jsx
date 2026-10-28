@@ -1,13 +1,17 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Shield, Mail, Lock, Eye, EyeOff, Loader2, ArrowRight, ShieldAlert, KeyRound } from "lucide-react";
+import { Shield, Mail, Lock, Eye, EyeOff, Loader2, ArrowRight, ShieldAlert, KeyRound, AlertTriangle } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
 
 export default function AdminLogin() {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const requiresAdmin = searchParams.get("reason") === "admin_required";
+
   const [authMode, setAuthMode] = useState("pin"); // "pin" | "password"
   const [email, setEmail] = useState("admin@crbcl.ca");
   const [password, setPassword] = useState("");
@@ -85,6 +89,19 @@ export default function AdminLogin() {
         </div>
       }
     >
+      {/* Notice if redirected because user had a staff session */}
+      {requiresAdmin && (
+        <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-left flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-600 flex-shrink-0" />
+          <div>
+            <div className="font-bold">Administrator Authentication Required</div>
+            <div className="text-[11px] opacity-90 mt-0.5">
+              You are accessing the <strong>IT Admin Portal</strong>. If you are currently logged in as a Supervisor or Caseworker, please sign in with an IT Administrator account below.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mode Switcher Tabs */}
       <div className="grid grid-cols-2 gap-1 p-1 bg-[#F5F2EF] rounded-xl mb-4 border border-[#E8E3DF]">
         <button
