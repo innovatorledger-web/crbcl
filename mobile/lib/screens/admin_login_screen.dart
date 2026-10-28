@@ -14,29 +14,22 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _emailController = TextEditingController(text: 'admin@crbcl.ca');
   final _passwordController = TextEditingController();
   final _pinController = TextEditingController();
+  final _newPinController = TextEditingController();
+  final _confirmPinController = TextEditingController();
   final _authService = MobileAuthService.instance;
 
   bool _obscurePassword = true;
   bool _obscurePin = true;
+  bool _obscureNewPin = true;
+  bool _obscureConfirmPin = true;
   bool _isLoading = false;
-  bool _hasAdminPin = false;
-  bool _isPinMode = false;
+  bool _isPinMode = true; // Default to Quick PIN mode so it's always immediately visible
+  bool _isSettingUpPin = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _checkAdminPin();
-  }
-
-  Future<void> _checkAdminPin() async {
-    final hasPin = await _authService.hasAdminPin();
-    if (mounted) {
-      setState(() {
-        _hasAdminPin = hasPin;
-        _isPinMode = hasPin;
-      });
-    }
   }
 
   @override
@@ -44,6 +37,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _pinController.dispose();
+    _newPinController.dispose();
+    _confirmPinController.dispose();
     super.dispose();
   }
 
@@ -59,7 +54,11 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       _errorMessage = null;
     });
 
-    final result = await _authService.unlockWithPin(pin, email: 'admin@crbcl.ca');
+    final targetEmail = _emailController.text.trim().isNotEmpty
+        ? _emailController.text.trim()
+        : 'admin@crbcl.ca';
+
+    final result = await _authService.unlockWithPin(pin, email: targetEmail);
     setState(() => _isLoading = false);
 
     if (result.success) {
@@ -68,6 +67,45 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       }
     } else {
       setState(() => _errorMessage = result.errorMessage);
+    }
+  }
+
+  Future<void> _handleSetAdminPin() async {
+    final pin = _newPinController.text.trim();
+    final confirm = _confirmPinController.text.trim();
+
+    if (pin.length != 6 || !RegExp(r'^\d{6}$').hasMatch(pin)) {
+      setState(() => _errorMessage = 'Admin PIN must be exactly 6 numeric digits.');
+      return;
+    }
+
+    if (pin != confirm) {
+      setState(() => _errorMessage = 'PINs do not match. Please re-enter.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    final targetEmail = _emailController.text.trim().isNotEmpty
+        ? _emailController.text.trim()
+        : 'admin@crbcl.ca';
+
+    final success = await _authService.setPin(pin, email: targetEmail);
+    setState(() => _isLoading = false);
+
+    if (success) {
+      setState(() {
+        _isSettingUpPin = false;
+        _isPinMode = true;
+        _errorMessage = null;
+        _pinController.text = pin;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('6-Digit Admin Quick PIN saved successfully.')),
+        );
+      }
+    } else {
+      setState(() => _errorMessage = 'Failed to derive PBKDF2 key for Admin PIN.');
     }
   }
 
@@ -94,6 +132,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
     if (!result.success) {
       setState(() => _errorMessage = result.errorMessage ?? 'Administrator authentication failed.');
+      return;
+    }
+
+    if (result.requiresPinSetup) {
+      setState(() {
+        _isSettingUpPin = true;
+        _errorMessage = null;
+      });
       return;
     }
 
@@ -216,6 +262,116 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           ),
                           const SizedBox(height: 20),
 
+                          // Mode Switcher Tabs for IT Admin
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 18),
+                            decoration: BoxDecoration(
+                              color: adminPurple.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: adminPurple.withValues(alpha: 0.25),
+                              ),
+                            ),
+                            padding: const EdgeInsets.all(4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: () {
+                                      setState(() {
+                                        _isPinMode = true;
+                                        _errorMessage = null;
+                                      });
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 9),
+                                      decoration: BoxDecoration(
+                                        color: _isPinMode ? adminPurple : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                        boxShadow: _isPinMode
+                                            ? [
+                                                BoxShadow(
+                                                  color: Colors.black.withValues(alpha: 0.1),
+                                                  blurRadius: 4,
+                                                  offset: const Offset(0, 2),
+                                                )
+                                              ]
+                                            : null,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.pin_outlined,
+                                            size: 16,
+                                            color: _isPinMode ? Colors.white : adminPurpleLight,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Quick PIN',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              color: _isPinMode ? Colors.white : theme.colorScheme.onSurface.withValues(alpha: 0.75),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: () {
+                                      setState(() {
+                                        _isPinMode = false;
+                                        _errorMessage = null;
+                                      });
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 9),
+                                      decoration: BoxDecoration(
+                                        color: !_isPinMode ? adminPurple : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                        boxShadow: !_isPinMode
+                                            ? [
+                                                BoxShadow(
+                                                  color: Colors.black.withValues(alpha: 0.1),
+                                                  blurRadius: 4,
+                                                  offset: const Offset(0, 2),
+                                                )
+                                              ]
+                                            : null,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.security,
+                                            size: 16,
+                                            color: !_isPinMode ? Colors.white : adminPurpleLight,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Password',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              color: !_isPinMode ? Colors.white : theme.colorScheme.onSurface.withValues(alpha: 0.75),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
                           if (_errorMessage != null) ...[
                             Container(
                               padding: const EdgeInsets.all(12),
@@ -241,7 +397,94 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                             const SizedBox(height: 16),
                           ],
 
-                          if (_isPinMode) ...[
+                          if (_isSettingUpPin) ...[
+                            // PIN Setup Mode UI
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: adminPurple.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.key_rounded, color: adminPurpleLight, size: 24),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('Configure 6-Digit Admin PIN', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                        Text('Create a 6-digit PIN for rapid admin unlock and offline access', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _newPinController,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              obscureText: _obscureNewPin,
+                              decoration: InputDecoration(
+                                labelText: 'New 6-Digit Admin PIN',
+                                prefixIcon: const Icon(Icons.pin_outlined),
+                                border: const OutlineInputBorder(),
+                                suffixIcon: IconButton(
+                                  icon: Icon(_obscureNewPin ? Icons.visibility_off : Icons.visibility),
+                                  onPressed: () => setState(() => _obscureNewPin = !_obscureNewPin),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _confirmPinController,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              obscureText: _obscureConfirmPin,
+                              decoration: InputDecoration(
+                                labelText: 'Confirm 6-Digit Admin PIN',
+                                prefixIcon: const Icon(Icons.pin_outlined),
+                                border: const OutlineInputBorder(),
+                                suffixIcon: IconButton(
+                                  icon: Icon(_obscureConfirmPin ? Icons.visibility_off : Icons.visibility),
+                                  onPressed: () => setState(() => _obscureConfirmPin = !_obscureConfirmPin),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            ElevatedButton(
+                              onPressed: _isLoading ? null : _handleSetAdminPin,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: adminPurple,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: const [
+                                        Icon(Icons.save_rounded, size: 18),
+                                        SizedBox(width: 8),
+                                        Text('Save Admin PIN', style: TextStyle(fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _isSettingUpPin = false;
+                                _errorMessage = null;
+                              }),
+                              child: const Text('Cancel & Return'),
+                            ),
+                          ] else if (_isPinMode) ...[
                             // PIN Mode UI
                             Container(
                               padding: const EdgeInsets.all(12),
@@ -308,13 +551,27 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                                     ),
                             ),
                             const SizedBox(height: 10),
-                            TextButton.icon(
-                              onPressed: () => setState(() {
-                                _isPinMode = false;
-                                _errorMessage = null;
-                              }),
-                              icon: const Icon(Icons.password, size: 16),
-                              label: const Text('Use Administrator Password Instead'),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () => setState(() {
+                                    _isSettingUpPin = true;
+                                    _errorMessage = null;
+                                  }),
+                                  icon: const Icon(Icons.key, size: 15),
+                                  label: const Text('Configure / Set PIN', style: TextStyle(fontSize: 12)),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () => setState(() {
+                                    _isPinMode = false;
+                                    _errorMessage = null;
+                                  }),
+                                  icon: const Icon(Icons.password, size: 15),
+                                  label: const Text('Use Password', style: TextStyle(fontSize: 12)),
+                                ),
+                              ],
                             ),
                           ] else ...[
                             // Password Mode UI
@@ -375,17 +632,21 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                                       ],
                                     ),
                             ),
-                            if (_hasAdminPin) ...[
-                              const SizedBox(height: 10),
-                              TextButton.icon(
-                                onPressed: () => setState(() {
-                                  _isPinMode = true;
-                                  _errorMessage = null;
-                                }),
-                                icon: const Icon(Icons.pin, size: 16),
-                                label: const Text('Unlock with Quick Access PIN'),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: () => setState(() {
+                                _isPinMode = true;
+                                _errorMessage = null;
+                              }),
+                              icon: const Icon(Icons.pin_outlined, size: 16),
+                              label: const Text('Unlock with 6-Digit Admin PIN'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: adminPurpleLight,
+                                side: BorderSide(color: adminPurple.withValues(alpha: 0.4)),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                               ),
-                            ],
+                            ),
                           ],
                         ],
                       ),
