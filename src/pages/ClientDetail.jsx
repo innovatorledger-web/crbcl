@@ -27,6 +27,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/components/ui/use-toast";
@@ -54,6 +55,10 @@ export default function ClientDetail() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isPermanentDeleteDialogOpen, setIsPermanentDeleteDialogOpen] = useState(false);
+  const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
   const tabsScrollRef = useRef(null);
 
   const [canDelete] = useState(() => {
@@ -84,8 +89,8 @@ export default function ClientDetail() {
       setIsDeleting(true);
       await clientsApi.delete(id);
       toast({
-        title: "Client Record Deleted",
-        description: `Client record has been successfully removed.`,
+        title: "Client Moved to Trash",
+        description: `Client record has been moved to Trash (held for 45 days).`,
       });
       navigate("/clients");
     } catch (err) {
@@ -100,16 +105,59 @@ export default function ClientDetail() {
     }
   };
 
+  const handleRestoreClient = async () => {
+    try {
+      setIsRestoring(true);
+      await clientsApi.restore(id);
+      toast({
+        title: "Client Profile Restored",
+        description: `Client profile has been successfully restored from Trash.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['client', id] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    } catch (err) {
+      toast({
+        title: "Restore Failed",
+        description: err.message || "Could not restore client profile.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRestoring(false);
+      setIsRestoreDialogOpen(false);
+    }
+  };
+
+  const handlePermanentDeleteClient = async () => {
+    try {
+      setIsPermanentDeleting(true);
+      await clientsApi.permanentDelete(id);
+      toast({
+        title: "Client Permanently Deleted",
+        description: `Client record has been permanently purged from the system.`,
+      });
+      navigate("/clients");
+    } catch (err) {
+      toast({
+        title: "Permanent Delete Failed",
+        description: err.message || "Could not purge client record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPermanentDeleting(false);
+      setIsPermanentDeleteDialogOpen(false);
+    }
+  };
+
   // Form states for modals/sub-resources
   const [newAllergy, setNewAllergy] = useState({ allergen: '', reaction: '', severity: 'Moderate' });
   const [newMedication, setNewMedication] = useState({ medication_name: '', dosage: '', frequency: '', prescriber_name: '' });
   const [newStrength, setNewStrength] = useState({ name: '' });
   const [newChallenge, setNewChallenge] = useState({ name: '', severity: 'Moderate' });
 
-  // 1. Main Client Query
+  // 1. Main Client Query (allow deleted so Trash profiles can be inspected)
   const { data: client, isLoading, error } = useQuery({
     queryKey: ['client', id],
-    queryFn: () => clientsApi.get(id),
+    queryFn: () => clientsApi.get(id, true),
   });
 
   // 2. Medical Data Query
@@ -249,32 +297,92 @@ export default function ClientDetail() {
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-0 border-border/60">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => setIsEditModalOpen(true)}
-              className="gap-1.5 shadow-sm"
-            >
-              <Pencil className="w-4 h-4" /> Edit Profile
-            </Button>
-            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
-              <Link to={`/cases?client_id=${client.id}`}>
-                <FileText className="w-4 h-4 mr-1.5" /> View Cases
-              </Link>
-            </Button>
-            {canDelete && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsDeleteDialogOpen(true)}
-                className="gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
-              >
-                <Trash2 className="w-4 h-4" /> Delete Record
-              </Button>
+            {client.is_deleted ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsRestoreDialogOpen(true)}
+                  className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                >
+                  <RotateCcw className="w-4 h-4" /> Restore Client
+                </Button>
+                {canDelete && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setIsPermanentDeleteDialogOpen(true)}
+                    className="gap-1.5"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete Permanently
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="gap-1.5 shadow-sm"
+                >
+                  <Pencil className="w-4 h-4" /> Edit Profile
+                </Button>
+                <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
+                  <Link to={`/cases?client_id=${client.id}`}>
+                    <FileText className="w-4 h-4 mr-1.5" /> View Cases
+                  </Link>
+                </Button>
+                {canDelete && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsDeleteDialogOpen(true)}
+                    className="gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete Record
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </div>
       </div>
+
+      {/* Trash Notice Banner */}
+      {client.is_deleted && (
+        <div className="bg-destructive/10 border-2 border-destructive/40 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-destructive">
+          <div className="flex items-center gap-3">
+            <Trash2 className="w-6 h-6 shrink-0" />
+            <div>
+              <p className="font-bold text-sm">
+                This client record is currently in Trash ({client.days_until_purge ?? 45} days remaining)
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Profiles in trash are hidden from normal rosters and active caseloads. You can restore this client or delete them permanently.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsRestoreDialogOpen(true)}
+              className="gap-1.5 border-emerald-500/50 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 w-full sm:w-auto"
+            >
+              <RotateCcw className="w-4 h-4" /> Restore
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setIsPermanentDeleteDialogOpen(true)}
+              className="gap-1.5 w-full sm:w-auto"
+            >
+              <Trash2 className="w-4 h-4" /> Delete Permanently
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Pending Approval Notice for Reviewers */}
       {client.approval_status === "PENDING_APPROVAL" && (
@@ -760,17 +868,17 @@ export default function ClientDetail() {
         }}
       />
 
-      {/* Delete Client Confirmation Modal */}
+      {/* Delete Client Confirmation Modal (Move to Trash) */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
               <Trash2 className="w-5 h-5" />
-              Delete Client Record?
+              Move Client to Trash?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong className="text-foreground">{client?.first_name} {client?.last_name}</strong> (#{client?.person_id_number || client?.id})?
-              This action will archive/soft-delete the record and remove it from active intake and client rosters.
+              Are you sure you want to move <strong className="text-foreground">{client?.first_name} {client?.last_name}</strong> (#{client?.person_id_number || client?.id}) to the Trash?
+              The record will be kept in Trash for <strong>45 days</strong> before being permanently purged, during which it can be restored at any time.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -780,7 +888,60 @@ export default function ClientDetail() {
               disabled={isDeleting}
               className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
             >
-              {isDeleting ? "Deleting..." : "Yes, Delete Client"}
+              {isDeleting ? "Moving..." : "Move to Trash"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Restore Client Confirmation Modal */}
+      <AlertDialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-emerald-600">
+              <RotateCcw className="w-5 h-5" />
+              Restore Client Profile?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Restore <strong className="text-foreground">{client?.first_name} {client?.last_name}</strong> (#{client?.person_id_number || client?.id}) back to active directories?
+              The client will immediately reappear in the active clients directory and caseload rosters.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRestoring}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRestoreClient}
+              disabled={isRestoring}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {isRestoring ? "Restoring..." : "Restore Client"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Permanent Delete Confirmation Modal */}
+      <AlertDialog open={isPermanentDeleteDialogOpen} onOpenChange={setIsPermanentDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              Permanently Delete Client Record?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              ⚠️ <strong className="text-destructive font-semibold">Warning: This action is permanent and cannot be undone.</strong>
+              <br /><br />
+              All data associated with <strong className="text-foreground">{client?.first_name} {client?.last_name}</strong> will be irreversibly purged from the system.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPermanentDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handlePermanentDeleteClient}
+              disabled={isPermanentDeleting}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              {isPermanentDeleting ? "Purging..." : "Permanently Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

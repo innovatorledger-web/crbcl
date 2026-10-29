@@ -28,9 +28,13 @@ class ClientRepository(BaseRepository[Client]):
         offset: int = 0,
         limit: int = 50,
         sort_by: str | None = None,
+        trash: bool = False,
     ) -> tuple[list[Client], int]:
-        """Search clients with team access scoping, approval status filter, and text search."""
-        query = select(Client).where(Client.deleted_at.is_(None))
+        """Search clients with team access scoping, approval status filter, text search, and trash filter."""
+        if trash:
+            query = select(Client).where(Client.deleted_at.is_not(None))
+        else:
+            query = select(Client).where(Client.deleted_at.is_(None))
 
         # Team scoping: if accessible_team_ids is provided, restrict to those teams or unassigned
         if accessible_team_ids is not None:
@@ -135,3 +139,37 @@ class ClientRepository(BaseRepository[Client]):
         )
         res = await self.db.execute(stmt)
         return list(res.scalars().all())
+
+    async def get_status_counts(
+        self,
+        accessible_team_ids: set[uuid.UUID] | None = None,
+    ) -> dict[str, int]:
+        """Return counts for All, Approved, Pending, Returned, and Trash tabs."""
+        base = select(Client)
+        if accessible_team_ids is not None:
+            base = base.where(
+                or_(
+                    Client.assigned_team_id.in_(accessible_team_ids),
+                    Client.assigned_team_id.is_(None),
+                )
+            )
+
+        all_q = select(func.count()).select_from(base.where(Client.deleted_at.is_(None)).subquery())
+        approved_q = select(func.count()).select_from(base.where(Client.deleted_at.is_(None), Client.approval_status == "APPROVED").subquery())
+        pending_q = select(func.count()).select_from(base.where(Client.deleted_at.is_(None), Client.approval_status == "PENDING_APPROVAL").subquery())
+        returned_q = select(func.count()).select_from(base.where(Client.deleted_at.is_(None), Client.approval_status == "RETURNED").subquery())
+        trash_q = select(func.count()).select_from(base.where(Client.deleted_at.is_not(None)).subquery())
+
+        all_c = (await self.db.execute(all_q)).scalar_one()
+        approved_c = (await self.db.execute(approved_q)).scalar_one()
+        pending_c = (await self.db.execute(pending_q)).scalar_one()
+        returned_c = (await self.db.execute(returned_q)).scalar_one()
+        trash_c = (await self.db.execute(trash_q)).scalar_one()
+
+        return {
+            "all": all_c,
+            "approved": approved_c,
+            "pending": pending_c,
+            "returned": returned_c,
+            "trash": trash_c,
+        }

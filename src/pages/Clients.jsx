@@ -36,6 +36,11 @@ export default function Clients() {
   const [editingClient, setEditingClient] = useState(null);
   const [clientToDelete, setClientToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [clientToRestore, setClientToRestore] = useState(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [clientToPurge, setClientToPurge] = useState(null);
+  const [isPurging, setIsPurging] = useState(false);
+  const [serverCounts, setServerCounts] = useState({ all: 0, approved: 0, pending: 0, returned: 0, trash: 0 });
   const [canApprove, setCanApprove] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
@@ -63,12 +68,19 @@ export default function Clients() {
     }
   });
 
-  const loadClients = async () => {
+  const loadClients = async (tab = activeTab) => {
     try {
       setLoading(true);
-      const res = await clientsApi.listFiltered(null, 100, 0);
+      const isTrash = tab === "TRASH";
+      const [res, countRes] = await Promise.all([
+        clientsApi.listFiltered(isTrash ? null : (tab === "ALL" ? null : tab), 100, 0, isTrash),
+        clientsApi.getCounts(),
+      ]);
       const items = Array.isArray(res) ? res : res?.items || [];
       setClients(items);
+      if (countRes) {
+        setServerCounts(countRes);
+      }
     } catch (err) {
       console.error("Failed to load clients:", err);
       toast({
@@ -82,17 +94,22 @@ export default function Clients() {
     }
   };
 
+  const handleTabChange = (val) => {
+    setActiveTab(val);
+    loadClients(val);
+  };
+
   const handleDeleteClient = async () => {
     if (!clientToDelete) return;
     try {
       setIsDeleting(true);
       await clientsApi.delete(clientToDelete.id);
       toast({
-        title: "Client Record Deleted",
-        description: `${clientToDelete.first_name || "Client"} ${clientToDelete.last_name || ""} has been deleted.`,
+        title: "Moved to Trash (45-Day Retention)",
+        description: `${clientToDelete.first_name || "Client"} ${clientToDelete.last_name || ""} has been moved to Trash. It will be kept for 45 days before permanent deletion.`,
       });
       setClientToDelete(null);
-      await loadClients();
+      await loadClients(activeTab);
     } catch (err) {
       console.error("Failed to delete client:", err);
       toast({
@@ -105,8 +122,54 @@ export default function Clients() {
     }
   };
 
+  const handleRestoreClient = async () => {
+    if (!clientToRestore) return;
+    try {
+      setIsRestoring(true);
+      await clientsApi.restore(clientToRestore.id);
+      toast({
+        title: "Client Restored",
+        description: `${clientToRestore.first_name || "Client"} ${clientToRestore.last_name || ""} has been restored from the trash back to active directory.`,
+      });
+      setClientToRestore(null);
+      await loadClients(activeTab);
+    } catch (err) {
+      console.error("Failed to restore client:", err);
+      toast({
+        title: "Restore Failed",
+        description: err.message || "Could not restore client record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handlePermanentDeleteClient = async () => {
+    if (!clientToPurge) return;
+    try {
+      setIsPurging(true);
+      await clientsApi.permanentDelete(clientToPurge.id);
+      toast({
+        title: "Client Permanently Erased",
+        description: `${clientToPurge.first_name || "Client"} ${clientToPurge.last_name || ""} has been permanently purged from CRBCL records.`,
+      });
+      setClientToPurge(null);
+      await loadClients(activeTab);
+    } catch (err) {
+      console.error("Failed to permanently delete client:", err);
+      toast({
+        title: "Permanent Deletion Failed",
+        description: err.message || "Could not permanently delete client record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
   useEffect(() => {
-    loadClients();
+    loadClients(activeTab);
     api?.auth?.me?.().then(u => {
       if (u) {
         const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
@@ -118,12 +181,13 @@ export default function Clients() {
 
   const counts = useMemo(() => {
     return {
-      all: clients.length,
-      approved: clients.filter((c) => c.approval_status === "APPROVED").length,
-      pending: clients.filter((c) => c.approval_status === "PENDING_APPROVAL").length,
-      returned: clients.filter((c) => c.approval_status === "RETURNED").length,
+      all: serverCounts.all ?? clients.filter(c => !c.deleted_at).length,
+      approved: serverCounts.approved ?? clients.filter((c) => !c.deleted_at && c.approval_status === "APPROVED").length,
+      pending: serverCounts.pending ?? clients.filter((c) => !c.deleted_at && c.approval_status === "PENDING_APPROVAL").length,
+      returned: serverCounts.returned ?? clients.filter((c) => !c.deleted_at && c.approval_status === "RETURNED").length,
+      trash: serverCounts.trash ?? clients.filter((c) => !!c.deleted_at).length,
     };
-  }, [clients]);
+  }, [clients, serverCounts]);
 
   const filtered = useMemo(() => {
     return clients.filter((c) => {
@@ -131,6 +195,7 @@ export default function Clients() {
       if (activeTab === "APPROVED" && c.approval_status !== "APPROVED") return false;
       if (activeTab === "PENDING_APPROVAL" && c.approval_status !== "PENDING_APPROVAL") return false;
       if (activeTab === "RETURNED" && c.approval_status !== "RETURNED") return false;
+      // When activeTab === "TRASH", all items loaded are trash records
 
       // Search filter
       if (!search.trim()) return true;
@@ -258,8 +323,8 @@ export default function Clients() {
           />
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full sm:w-auto">
-          <TabsList className="flex overflow-x-auto no-scrollbar sm:grid sm:grid-cols-4 h-10 bg-muted/60 p-1 w-full sm:w-auto">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full sm:w-auto">
+          <TabsList className="flex overflow-x-auto no-scrollbar sm:grid sm:grid-cols-5 h-10 bg-muted/60 p-1 w-full sm:w-auto">
             <TabsTrigger value="ALL" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial">
               All ({counts.all})
             </TabsTrigger>
@@ -271,6 +336,10 @@ export default function Clients() {
             </TabsTrigger>
             <TabsTrigger value="RETURNED" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial">
               Returned ({counts.returned})
+            </TabsTrigger>
+            <TabsTrigger value="TRASH" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial text-rose-700 dark:text-rose-400 gap-1.5 font-medium">
+              <Trash2 className="w-3.5 h-3.5" />
+              Trash ({counts.trash})
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -404,49 +473,85 @@ export default function Clients() {
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
-                    {c.approval_status === "PENDING_APPROVAL" && canApprove && (
-                      <span
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          navigate(`/intake/approvals?tab=clients&reviewId=${c.id}`);
-                        }}
-                        className="text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 font-semibold inline-flex items-center gap-1 cursor-pointer bg-amber-50 dark:bg-amber-950/40 px-2 py-1 rounded-md border border-amber-200 dark:border-amber-800/50"
-                      >
-                        <Clock className="w-3 h-3" />
-                        Review Proposal
-                      </span>
-                    )}
+                    {activeTab === "TRASH" ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setClientToRestore(c);
+                          }}
+                          className="h-7 px-2.5 text-xs gap-1.5 text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 border-emerald-300/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold"
+                          title="Restore client from trash"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Restore</span>
+                        </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setEditingClient(c);
-                      }}
-                      className="h-7 px-2 text-xs gap-1 hover:text-foreground text-muted-foreground"
-                    >
-                      <Pencil className="w-3 h-3" />
-                      <span>Edit</span>
-                    </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setClientToPurge(c);
+                          }}
+                          className="h-7 px-2.5 text-xs gap-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold"
+                          title="Permanently erase client"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete Permanently</span>
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        {c.approval_status === "PENDING_APPROVAL" && canApprove && (
+                          <span
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              navigate(`/intake/approvals?tab=clients&reviewId=${c.id}`);
+                            }}
+                            className="text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 font-semibold inline-flex items-center gap-1 cursor-pointer bg-amber-50 dark:bg-amber-950/40 px-2 py-1 rounded-md border border-amber-200 dark:border-amber-800/50"
+                          >
+                            <Clock className="w-3 h-3" />
+                            Review Proposal
+                          </span>
+                        )}
 
-                    {canDelete && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setClientToDelete(c);
-                        }}
-                        className="h-7 px-2 text-xs gap-1 text-destructive/80 hover:text-destructive hover:bg-destructive/10"
-                        title="Delete client record"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Delete</span>
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEditingClient(c);
+                          }}
+                          className="h-7 px-2 text-xs gap-1 hover:text-foreground text-muted-foreground"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Edit</span>
+                        </Button>
+
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setClientToDelete(c);
+                            }}
+                            className="h-7 px-2 text-xs gap-1 text-destructive/80 hover:text-destructive hover:bg-destructive/10"
+                            title="Move to trash (45 days retention)"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete</span>
+                          </Button>
+                        )}
+                      </>
                     )}
 
                     <div className="flex items-center text-primary font-medium group-hover:translate-x-1 transition-transform ml-auto sm:ml-0">
@@ -480,17 +585,18 @@ export default function Clients() {
         }}
       />
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete (Move to Trash) Confirmation Dialog */}
       <AlertDialog open={!!clientToDelete} onOpenChange={(open) => !open && setClientToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
               <Trash2 className="w-5 h-5" />
-              Delete Client Record?
+              Move Client Record to Trash?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete <strong className="text-foreground">{clientToDelete?.first_name} {clientToDelete?.last_name}</strong> (#{clientToDelete?.person_id_number || clientToDelete?.id})?
-              This action will remove the client from active rosters and archive the record.
+              <br /><br />
+              The client record will be kept in the <strong>Trash for 45 days</strong>, during which it can be restored at any time before automated permanent purging.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -500,7 +606,61 @@ export default function Clients() {
               disabled={isDeleting}
               className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
             >
-              {isDeleting ? "Deleting..." : "Yes, Delete Client"}
+              {isDeleting ? "Moving to Trash..." : "Yes, Move to Trash"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Restore Confirmation Dialog */}
+      <AlertDialog open={!!clientToRestore} onOpenChange={(open) => !open && setClientToRestore(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+              <RotateCcw className="w-5 h-5" />
+              Restore Client Record?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to restore <strong className="text-foreground">{clientToRestore?.first_name} {clientToRestore?.last_name}</strong> (#{clientToRestore?.person_id_number || clientToRestore?.id})?
+              <br /><br />
+              This record will be recovered from the Trash and returned to the active client directory and caseloads.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRestoring}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRestoreClient}
+              disabled={isRestoring}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+            >
+              {isRestoring ? "Restoring..." : "Yes, Restore Record"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Permanent Delete Confirmation Dialog */}
+      <AlertDialog open={!!clientToPurge} onOpenChange={(open) => !open && setClientToPurge(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              Permanently Delete Client Record?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently erase <strong className="text-foreground">{clientToPurge?.first_name} {clientToPurge?.last_name}</strong> (#{clientToPurge?.person_id_number || clientToPurge?.id})?
+              <br /><br />
+              <span className="font-semibold text-destructive">WARNING: This action cannot be undone.</span> The client profile, notes, and canonical intake data will be permanently wiped from the database immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPurging}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handlePermanentDeleteClient}
+              disabled={isPurging}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-medium"
+            >
+              {isPurging ? "Purging Record..." : "Yes, Permanently Erase"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

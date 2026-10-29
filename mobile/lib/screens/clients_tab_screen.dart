@@ -88,6 +88,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
         final token = await _authService.getAccessToken();
 
         if (token != null && token.isNotEmpty) {
+          // A. Fetch Active Clients
           final uri = Uri.parse('$serverUrl/api/v1/clients?limit=100');
           final response = await http.get(
             uri,
@@ -109,6 +110,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                 combinedList.add({
                   'id': mapItem['id'],
                   'is_remote': true,
+                  'is_trash': false,
                   'first_name': mapItem['first_name'] ?? '',
                   'last_name': mapItem['last_name'] ?? '',
                   'middle_name': mapItem['middle_name'],
@@ -136,6 +138,63 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
               }
             }
           }
+
+          // B. Fetch Trash Clients (soft-deleted in last 45 days)
+          try {
+            final trashUri = Uri.parse('$serverUrl/api/v1/clients?trash=true&limit=100');
+            final trashResponse = await http.get(
+              trashUri,
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            ).timeout(const Duration(seconds: 15));
+
+            if (trashResponse.statusCode == 200) {
+              final trashData = jsonDecode(trashResponse.body);
+              final trashItems = trashData is Map && trashData['items'] is List
+                  ? trashData['items'] as List
+                  : (trashData is List ? trashData : []);
+
+              for (final item in trashItems) {
+                if (item is Map) {
+                  final mapItem = Map<String, dynamic>.from(item);
+                  combinedList.add({
+                    'id': mapItem['id'],
+                    'is_remote': true,
+                    'is_trash': true,
+                    'days_until_purge': mapItem['days_until_purge'] ?? 45,
+                    'deleted_at': mapItem['deleted_at'],
+                    'first_name': mapItem['first_name'] ?? '',
+                    'last_name': mapItem['last_name'] ?? '',
+                    'middle_name': mapItem['middle_name'],
+                    'preferred_name': mapItem['preferred_name'],
+                    'aliases': mapItem['aliases'],
+                    'person_id': mapItem['person_id'],
+                    'person_id_number': mapItem['person_id_number'] ?? 'PENDING-ID',
+                    'approval_status': (mapItem['approval_status'] ?? 'APPROVED').toString().toUpperCase(),
+                    'status': 'In Trash',
+                    'risk_level': mapItem['risk_level'] ?? 'Low',
+                    'band_nation': mapItem['band_nation'] ?? 'First Nations',
+                    'city': mapItem['city'] ?? 'Regina',
+                    'province': mapItem['province'] ?? 'SK',
+                    'date_of_birth': mapItem['date_of_birth'],
+                    'gender': mapItem['gender'],
+                    'phone': mapItem['phone'],
+                    'email': mapItem['email'],
+                    'photo_url': mapItem['photo_url'],
+                    'submission_notes': mapItem['submission_notes'],
+                    'submitted_by_name': mapItem['submitted_by_name'],
+                    'decided_by_name': mapItem['decided_by_name'],
+                    'raw_payload': mapItem,
+                    'sync_status': 'TRASH',
+                  });
+                }
+              }
+            }
+          } catch (_) {
+            // Trash query error fallback
+          }
         }
       } catch (err) {
         _errorMessage = 'Could not load platform clients: $err';
@@ -160,14 +219,14 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
       builder: (ctx) => AlertDialog(
         title: Row(
           children: const [
-            Icon(Icons.delete_forever, color: Colors.red),
+            Icon(Icons.delete_outline, color: Colors.red),
             SizedBox(width: 8),
-            Text('Delete Client Record?'),
+            Text('Move Client to Trash?'),
           ],
         ),
         content: Text(
-          'Are you sure you want to delete $clientName (#${client['person_id_number']})?\n\n'
-          '${isRemote ? "This will soft-delete the record on the CRBCL central platform." : "This will remove the local offline draft."}',
+          'Are you sure you want to move $clientName (#${client['person_id_number']}) to the Trash?\n\n'
+          '${isRemote ? "The record will be kept in Trash for 45 days before permanent purge, and can be restored at any time." : "This will remove the local offline draft."}',
         ),
         actions: [
           TextButton(
@@ -177,7 +236,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('Delete'),
+            child: const Text('Move to Trash'),
           ),
         ],
       ),
@@ -210,7 +269,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Client $clientName successfully deleted.'),
+            content: Text('Client $clientName moved to Trash (held for 45 days).'),
             backgroundColor: CrbclTokens.statusSuccess,
           ),
         );
@@ -221,6 +280,154 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to delete client: $e'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _restoreClient(Map<String, dynamic> client) async {
+    final clientName = '${client['first_name']} ${client['last_name']}';
+    final clientId = client['id']?.toString() ?? '';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.restore, color: Colors.green),
+            SizedBox(width: 8),
+            Text('Restore Client Profile?'),
+          ],
+        ),
+        content: Text(
+          'Restore $clientName (#${client['person_id_number']}) back to active directories?\n\n'
+          'The client will immediately reappear in the active clients directory and field rosters.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+            child: const Text('Restore Client'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final serverUrl = (await _authService.getServerUrl()).replaceAll(RegExp(r'/+$'), '');
+      final token = await _authService.getAccessToken();
+
+      if (token != null && token.isNotEmpty) {
+        final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId/restore');
+        final response = await http.post(
+          uri,
+          headers: {'Authorization': 'Bearer $token'},
+        ).timeout(const Duration(seconds: 15));
+
+        if (response.statusCode != 200 && response.statusCode != 204) {
+          throw Exception('Failed with status code ${response.statusCode}');
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Client $clientName successfully restored from Trash.'),
+            backgroundColor: CrbclTokens.statusSuccess,
+          ),
+        );
+      }
+      await _loadClients();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to restore client: $e'),
+            backgroundColor: CrbclTokens.statusError,
+          ),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _permanentDeleteClient(Map<String, dynamic> client) async {
+    final clientName = '${client['first_name']} ${client['last_name']}';
+    final clientId = client['id']?.toString() ?? '';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Permanently Delete?'),
+          ],
+        ),
+        content: Text(
+          '⚠️ WARNING: Are you sure you want to permanently delete $clientName (#${client['person_id_number']})?\n\n'
+          'This action is IRREVERSIBLE. All canonical data and records will be permanently erased.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800, foregroundColor: Colors.white),
+            child: const Text('Permanently Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final serverUrl = (await _authService.getServerUrl()).replaceAll(RegExp(r'/+$'), '');
+      final token = await _authService.getAccessToken();
+
+      if (token != null && token.isNotEmpty) {
+        final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId/permanent');
+        final response = await http.delete(
+          uri,
+          headers: {'Authorization': 'Bearer $token'},
+        ).timeout(const Duration(seconds: 15));
+
+        if (response.statusCode != 200 && response.statusCode != 204) {
+          throw Exception('Failed with status code ${response.statusCode}');
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Client $clientName permanently deleted.'),
+            backgroundColor: CrbclTokens.statusSuccess,
+          ),
+        );
+      }
+      await _loadClients();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to permanently delete client: $e'),
             backgroundColor: CrbclTokens.statusError,
           ),
         );
@@ -256,22 +463,41 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
               onPressed: () => Navigator.pop(ctx),
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.edit_outlined),
-                tooltip: 'Edit Client',
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _editClient(client);
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                tooltip: 'Delete Client',
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _deleteClient(client);
-                },
-              ),
+              if (client['is_trash'] == true) ...[
+                IconButton(
+                  icon: const Icon(Icons.restore, color: Colors.green),
+                  tooltip: 'Restore Client',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _restoreClient(client);
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_forever, color: Colors.red),
+                  tooltip: 'Permanently Delete',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _permanentDeleteClient(client);
+                  },
+                ),
+              ] else ...[
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined),
+                  tooltip: 'Edit Client',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _editClient(client);
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'Move to Trash',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _deleteClient(client);
+                  },
+                ),
+              ],
             ],
           ),
           body: SingleChildScrollView(
@@ -280,6 +506,39 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (client['is_trash'] == true) ...[
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.red.shade300),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'This client is in Trash (${client['days_until_purge'] ?? 45} days remaining)',
+                                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Soft-deleted records are retained for 45 days. You can restore or permanently delete this profile.',
+                                style: TextStyle(color: Colors.red.shade900, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 // Header Profile Info
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -533,11 +792,24 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
+    final activeClients = _clients.where((c) => c['is_trash'] != true).toList();
+    final approvedCount = activeClients.where((c) => c['approval_status'] == 'APPROVED').length;
+    final pendingCount = activeClients.where((c) => c['approval_status'] == 'PENDING_APPROVAL').length;
+    final returnedCount = activeClients.where((c) => c['approval_status'] == 'RETURNED').length;
+    final offlineCount = activeClients.where((c) => c['is_remote'] == false).length;
+    final trashCount = _clients.where((c) => c['is_trash'] == true).length;
+
     final filtered = _clients.where((c) {
-      // Filter tab
-      if (_activeFilter == 'APPROVED' && c['approval_status'] != 'APPROVED') return false;
-      if (_activeFilter == 'PENDING' && c['approval_status'] != 'PENDING_APPROVAL') return false;
-      if (_activeFilter == 'OFFLINE' && c['is_remote'] == true) return false;
+      final isTrash = c['is_trash'] == true;
+      if (_activeFilter == 'TRASH') {
+        if (!isTrash) return false;
+      } else {
+        if (isTrash) return false;
+        if (_activeFilter == 'APPROVED' && c['approval_status'] != 'APPROVED') return false;
+        if (_activeFilter == 'PENDING' && c['approval_status'] != 'PENDING_APPROVAL') return false;
+        if (_activeFilter == 'RETURNED' && c['approval_status'] != 'RETURNED') return false;
+        if (_activeFilter == 'OFFLINE' && c['is_remote'] == true) return false;
+      }
 
       // Search query
       if (_searchQuery.trim().isEmpty) return true;
@@ -607,27 +879,51 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                       child: Row(
                         children: [
                           ChoiceChip(
-                            label: Text('All (${_clients.length})'),
+                            label: Text('All (${activeClients.length})'),
                             selected: _activeFilter == 'ALL',
                             onSelected: (_) => setState(() => _activeFilter = 'ALL'),
                           ),
                           const SizedBox(width: 8),
                           ChoiceChip(
-                            label: Text('Approved (${_clients.where((c) => c['approval_status'] == 'APPROVED').length})'),
+                            label: Text('Approved ($approvedCount)'),
                             selected: _activeFilter == 'APPROVED',
                             onSelected: (_) => setState(() => _activeFilter = 'APPROVED'),
                           ),
                           const SizedBox(width: 8),
                           ChoiceChip(
-                            label: Text('Pending (${_clients.where((c) => c['approval_status'] == 'PENDING_APPROVAL').length})'),
+                            label: Text('Pending ($pendingCount)'),
                             selected: _activeFilter == 'PENDING',
                             onSelected: (_) => setState(() => _activeFilter = 'PENDING'),
                           ),
                           const SizedBox(width: 8),
                           ChoiceChip(
-                            label: Text('Offline Drafts (${_clients.where((c) => c['is_remote'] == false).length})'),
+                            label: Text('Returned ($returnedCount)'),
+                            selected: _activeFilter == 'RETURNED',
+                            onSelected: (_) => setState(() => _activeFilter = 'RETURNED'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: Text('Offline Drafts ($offlineCount)'),
                             selected: _activeFilter == 'OFFLINE',
                             onSelected: (_) => setState(() => _activeFilter = 'OFFLINE'),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            avatar: Icon(
+                              Icons.delete_outline,
+                              size: 15,
+                              color: _activeFilter == 'TRASH' ? Colors.white : Colors.red.shade700,
+                            ),
+                            label: Text(
+                              'Trash ($trashCount)',
+                              style: TextStyle(
+                                color: _activeFilter == 'TRASH' ? Colors.white : Colors.red.shade700,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            selected: _activeFilter == 'TRASH',
+                            selectedColor: Colors.red.shade700,
+                            onSelected: (_) => setState(() => _activeFilter = 'TRASH'),
                           ),
                         ],
                       ),
@@ -764,7 +1060,28 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                                     overflow: TextOverflow.ellipsis,
                                                   ),
                                                 ),
-                                                _buildApprovalBadge(status),
+                                                if (client['is_trash'] == true)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.red.withValues(alpha: 0.15),
+                                                      borderRadius: BorderRadius.circular(5),
+                                                      border: Border.all(color: Colors.red.shade300),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Icon(Icons.delete_outline, size: 11, color: Colors.red.shade800),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          'Trash (${client['days_until_purge'] ?? 45}d)',
+                                                          style: TextStyle(color: Colors.red.shade900, fontSize: 10, fontWeight: FontWeight.bold),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  )
+                                                else
+                                                  _buildApprovalBadge(status),
                                               ],
                                             ),
                                             const SizedBox(height: 4),
@@ -822,42 +1139,85 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                   const Divider(height: 1),
                                   const SizedBox(height: 8),
 
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      // Delete Button
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                                        tooltip: 'Delete Client Record',
-                                        visualDensity: VisualDensity.compact,
-                                        onPressed: () => _deleteClient(client),
-                                      ),
+                                  if (client['is_trash'] == true) ...[
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        // Permanent Delete Button
+                                        OutlinedButton.icon(
+                                          onPressed: () => _permanentDeleteClient(client),
+                                          icon: const Icon(Icons.delete_forever, size: 15, color: Colors.red),
+                                          label: const Text('Delete Permanently', style: TextStyle(color: Colors.red, fontSize: 11)),
+                                          style: OutlinedButton.styleFrom(
+                                            side: BorderSide(color: Colors.red.shade300),
+                                            visualDensity: VisualDensity.compact,
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          ),
+                                        ),
 
-                                      // Edit and View Profile Buttons
-                                      Row(
-                                        children: [
-                                          TextButton.icon(
-                                            onPressed: () => _editClient(client),
-                                            icon: const Icon(Icons.edit_outlined, size: 16),
-                                            label: const Text('Edit', style: TextStyle(fontSize: 12)),
-                                            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                                          ),
-                                          const SizedBox(width: 4),
-                                          ElevatedButton.icon(
-                                            onPressed: () => _viewClientProfile(client),
-                                            icon: const Icon(Icons.arrow_forward, size: 14),
-                                            label: const Text('View Profile', style: TextStyle(fontSize: 12)),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: colorScheme.primary,
-                                              foregroundColor: colorScheme.onPrimary,
-                                              visualDensity: VisualDensity.compact,
-                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        // Restore & View Profile Buttons
+                                        Row(
+                                          children: [
+                                            ElevatedButton.icon(
+                                              onPressed: () => _restoreClient(client),
+                                              icon: const Icon(Icons.restore, size: 15),
+                                              label: const Text('Restore', style: TextStyle(fontSize: 12)),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.green.shade700,
+                                                foregroundColor: Colors.white,
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                              ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
+                                            const SizedBox(width: 4),
+                                            IconButton(
+                                              icon: const Icon(Icons.info_outline, size: 18),
+                                              tooltip: 'View Profile',
+                                              visualDensity: VisualDensity.compact,
+                                              onPressed: () => _viewClientProfile(client),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ] else ...[
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        // Delete Button
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                                          tooltip: 'Move to Trash',
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () => _deleteClient(client),
+                                        ),
+
+                                        // Edit and View Profile Buttons
+                                        Row(
+                                          children: [
+                                            TextButton.icon(
+                                              onPressed: () => _editClient(client),
+                                              icon: const Icon(Icons.edit_outlined, size: 16),
+                                              label: const Text('Edit', style: TextStyle(fontSize: 12)),
+                                              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            ElevatedButton.icon(
+                                              onPressed: () => _viewClientProfile(client),
+                                              icon: const Icon(Icons.arrow_forward, size: 14),
+                                              label: const Text('View Profile', style: TextStyle(fontSize: 12)),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: colorScheme.primary,
+                                                foregroundColor: colorScheme.onPrimary,
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),

@@ -71,6 +71,7 @@ class ClientResponse(ClientBase):
     decision_reason: str | None = None
     is_deleted: bool = False
     deleted_at: datetime | None = None
+    days_until_purge: int | None = None
 
     created_at: datetime
     updated_at: datetime

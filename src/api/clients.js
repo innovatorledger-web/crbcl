@@ -2,7 +2,7 @@ import { api } from './client';
 
 export const clientsApi = {
   list: (params = {}) => api.entities.Client.list(params.sort, params.limit),
-  get: (id) => api.entities.Client.get(id),
+  get: (id, allowDeleted = false) => api.fetch(`/api/v1/clients/${id}?allow_deleted=${allowDeleted}`).then(res => res.json()).catch(() => api.entities.Client.get(id)),
   create: (data) => api.entities.Client.create(data),
   update: (id, data) => api.patch(`/api/v1/clients/${id}`, data),
   delete: async (id) => {
@@ -172,11 +172,33 @@ export const clientsApi = {
       return data;
     }),
 
-  listFiltered: (approvalStatus = null, limit = 100, offset = 0) => {
+  listFiltered: (approvalStatus = null, limit = 100, offset = 0, trash = false) => {
     const q = new URLSearchParams();
     if (approvalStatus && approvalStatus !== 'ALL') q.set('approval_status', approvalStatus);
+    if (trash) q.set('trash', 'true');
     q.set('limit', limit);
     q.set('offset', offset);
     return api.fetch(`/api/v1/clients?${q.toString()}`).then(res => res.json());
   },
+
+  getCounts: () =>
+    api.fetch('/api/v1/clients/counts').then(res => res.json()).catch(() => null),
+
+  restore: (id) =>
+    api.fetch(`/api/v1/clients/${id}/restore`, {
+      method: 'POST',
+    }).then(async res => {
+      const data = await res.json();
+      if (!res.ok) throw data;
+      return data;
+    }),
+
+  permanentDelete: (id) =>
+    api.fetch(`/api/v1/clients/${id}/permanent`, {
+      method: 'DELETE',
+    }).then(async res => {
+      if (res.ok || res.status === 204) return true;
+      const data = await res.json().catch(() => ({}));
+      throw data;
+    }),
 };

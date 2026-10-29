@@ -578,6 +578,395 @@ class _ClientDraftScreenState extends State<ClientDraftScreen> with SingleTicker
     }
   }
 
+  String _formatDobWithAge(DateTime? dob) {
+    if (dob == null) return 'Select Date of Birth';
+    final dobStr = DateFormat('yyyy-MM-dd').format(dob);
+    final now = DateTime.now();
+    int age = now.year - dob.year;
+    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+      age--;
+    }
+    return '$dobStr ($age yrs)';
+  }
+
+  InputDecoration _inputDeco(
+    BuildContext context, {
+    required String labelText,
+    String? hintText,
+    Widget? prefixIcon,
+    Widget? suffixIcon,
+  }) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colorScheme = theme.colorScheme;
+
+    return InputDecoration(
+      labelText: labelText,
+      hintText: hintText,
+      prefixIcon: prefixIcon,
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: isDark
+          ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+          : const Color(0xFFF9FAFB),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(
+          color: isDark ? colorScheme.outlineVariant.withValues(alpha: 0.5) : const Color(0xFFE5E7EB),
+        ),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(
+          color: isDark ? colorScheme.outlineVariant.withValues(alpha: 0.5) : const Color(0xFFE5E7EB),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(
+          color: colorScheme.primary,
+          width: 1.8,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    required List<Widget> children,
+  }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: isDark ? colorScheme.surfaceContainer : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? colorScheme.outlineVariant.withValues(alpha: 0.4) : const Color(0xFFE5E7EB),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 18, color: colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (trailing != null) trailing,
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepperHeader(ColorScheme colorScheme, bool isDark) {
+    final steps = [
+      {'title': 'Identity', 'icon': Icons.badge_outlined},
+      {'title': 'Physical', 'icon': Icons.accessibility_new_outlined},
+      {'title': 'Contact', 'icon': Icons.contact_phone_outlined},
+      {'title': 'Cultural', 'icon': Icons.nature_people_outlined},
+    ];
+
+    final currentIndex = _tabController.index.clamp(0, 3);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? colorScheme.surfaceContainer : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? colorScheme.outlineVariant.withValues(alpha: 0.4) : const Color(0xFFE5E7EB),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: List.generate(steps.length, (idx) {
+              final isSelected = currentIndex == idx;
+              final isDone = currentIndex > idx;
+              final icon = steps[idx]['icon'] as IconData;
+              final title = steps[idx]['title'] as String;
+
+              return Expanded(
+                child: InkWell(
+                  onTap: () => _tabController.animateTo(idx),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isSelected ? colorScheme.primary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                      border: isSelected
+                          ? Border.all(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5)
+                          : null,
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          isDone ? Icons.check_circle : icon,
+                          size: 19,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : (isDone ? Colors.green : colorScheme.onSurface.withValues(alpha: 0.45)),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                            color: isSelected
+                                ? colorScheme.primary
+                                : (isDone ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: 0.6)),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (currentIndex + 1) / 4.0,
+              backgroundColor: isDark ? colorScheme.surfaceContainerHighest : Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+              minHeight: 4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigationFooter(ColorScheme colorScheme) {
+    final currentIndex = _tabController.index.clamp(0, 3);
+    final isLastStep = currentIndex == 3;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? colorScheme.surfaceContainer : Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? colorScheme.outlineVariant.withValues(alpha: 0.4) : const Color(0xFFE5E7EB),
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            if (currentIndex > 0)
+              OutlinedButton.icon(
+                onPressed: () => _tabController.animateTo(currentIndex - 1),
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('Back'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            if (currentIndex > 0) const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSaving
+                    ? null
+                    : () {
+                        if (isLastStep) {
+                          _saveClientDraft();
+                        } else {
+                          _tabController.animateTo(currentIndex + 1);
+                        }
+                      },
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(isLastStep ? Icons.cloud_upload_outlined : Icons.arrow_forward, size: 18),
+                label: Text(
+                  _isSaving
+                      ? 'Saving File...'
+                      : (isLastStep ? 'Save & Synchronize Dossier' : 'Next Step →'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  elevation: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Proposal Context Card ──
+  Widget _buildContextCard(ColorScheme colorScheme) {
+    return _buildSectionCard(
+      context: context,
+      icon: Icons.assignment_outlined,
+      title: 'CLIENT PROPOSAL CONTEXT',
+      subtitle: 'Submitted for supervisor intake review upon saving',
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.amber.shade100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.amber.shade300),
+        ),
+        child: Text(
+          'Awaiting Review',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: Colors.amber.shade900,
+          ),
+        ),
+      ),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                initialValue: _selectedRiskLevel,
+                decoration: _inputDeco(
+                  context,
+                  labelText: 'Initial Risk Level *',
+                  prefixIcon: const Icon(Icons.shield_outlined, size: 18),
+                ),
+                items: _riskLevels
+                    .map((r) => DropdownMenuItem(value: r, child: Text('$r Risk', style: const TextStyle(fontSize: 13))))
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) setState(() => _selectedRiskLevel = val);
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: DropdownButtonFormField<String?>(
+                initialValue: _selectedTeamId,
+                isExpanded: true,
+                decoration: _inputDeco(
+                  context,
+                  labelText: 'Assigned Team (Optional)',
+                  prefixIcon: const Icon(Icons.groups_outlined, size: 18),
+                ),
+                items: _teams
+                    .map((t) => DropdownMenuItem<String?>(
+                          value: t['id'],
+                          child: Text(
+                            t['name'] ?? '',
+                            style: const TextStyle(fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ))
+                    .toList(),
+                onChanged: (val) {
+                  setState(() => _selectedTeamId = val);
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _notesController,
+          maxLines: 2,
+          decoration: _inputDeco(
+            context,
+            labelText: 'Submission Rationale / Intake Notes',
+            hintText: 'Immediate safety or stabilization needs, background...',
+            prefixIcon: const Icon(Icons.edit_note, size: 20),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -588,640 +977,548 @@ class _ClientDraftScreenState extends State<ClientDraftScreen> with SingleTicker
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isEditMode ? 'Edit Client Record' : 'New Client — Canonical Identity Intake'),
+        title: Text(isEditMode ? 'Edit Client Record' : 'Register New Client'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.check),
-            tooltip: 'Save Client',
+          TextButton.icon(
             onPressed: _isSaving ? null : _saveClientDraft,
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('Save', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
+      bottomNavigationBar: _buildNavigationFooter(colorScheme),
       body: Form(
         key: _formKey,
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Subtitle matching web modal
-                    Text(
-                      'Capture the canonical identity record. A permanent 10-digit CRBCL Person ID will be automatically generated upon saving, and the client context submitted for supervisor review.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.onSurface.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ── CLIENT PROPOSAL CONTEXT CARD (Matching Web Screenshot) ──
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.2)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'CLIENT PROPOSAL CONTEXT',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.primary,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.shade100,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.amber.shade300),
-                                ),
-                                child: Text(
-                                  'Awaiting Supervisor Review Upon Submit',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.amber.shade900,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-
-                          // Initial Risk Level & Assigned Team (Optional)
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text('Initial Risk Level *', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 4),
-                                    DropdownButtonFormField<String>(
-                                      initialValue: _selectedRiskLevel,
-                                      isDense: true,
-                                      decoration: const InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                                      ),
-                                      items: _riskLevels
-                                          .map((r) => DropdownMenuItem(value: r, child: Text('$r Risk', style: const TextStyle(fontSize: 13))))
-                                          .toList(),
-                                      onChanged: (val) {
-                                        if (val != null) setState(() => _selectedRiskLevel = val);
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text('Assigned Team (Optional)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 4),
-                                    DropdownButtonFormField<String?>(
-                                      initialValue: _selectedTeamId,
-                                      isDense: true,
-                                      isExpanded: true,
-                                      decoration: const InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                                      ),
-                                      items: _teams
-                                          .map((t) => DropdownMenuItem<String?>(
-                                                value: t['id'],
-                                                child: Text(
-                                                  t['name'] ?? '',
-                                                  style: const TextStyle(fontSize: 12),
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ))
-                                          .toList(),
-                                      onChanged: (val) {
-                                        setState(() => _selectedTeamId = val);
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-
-                          // Submission Rationale / Intake Notes
-                          const Text('Submission Rationale / Intake Notes', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 4),
-                          TextFormField(
-                            controller: _notesController,
-                            maxLines: 2,
-                            decoration: const InputDecoration(
-                              hintText: 'Provide background, immediate safety or stabilization needs, or rationale for proposing this client...',
-                              hintStyle: TextStyle(fontSize: 11, fontStyle: FontStyle.italic),
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.all(10),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // ── 4 TABS NAVIGATION WITH ARROWS (Matching Web Screenshot) ──
-                    Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.chevron_left),
-                          tooltip: 'Previous Tab',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            if (_tabController.index > 0) {
-                              _tabController.animateTo(_tabController.index - 1);
-                            }
-                          },
-                        ),
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: isDark ? colorScheme.surfaceContainerHighest : Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-                            ),
-                            child: TabBar(
-                              controller: _tabController,
-                              isScrollable: true,
-                              tabAlignment: TabAlignment.start,
-                              labelColor: colorScheme.primary,
-                              unselectedLabelColor: colorScheme.onSurface.withValues(alpha: 0.6),
-                              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                              indicatorColor: colorScheme.primary,
-                              indicatorSize: TabBarIndicatorSize.tab,
-                              tabs: const [
-                                Tab(text: '1. Identity'),
-                                Tab(text: '2. Physical ID'),
-                                Tab(text: '3. Contact & Address'),
-                                Tab(text: '4. Cultural'),
-                              ],
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.chevron_right),
-                          tooltip: 'Next Tab',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
-                            if (_tabController.index < 3) {
-                              _tabController.animateTo(_tabController.index + 1);
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Active Section Indicator banner
-                    AnimatedBuilder(
-                      animation: _tabController,
-                      builder: (context, _) {
-                        final tabTitles = [
-                          'Section 1 of 4: Identity & Vital Information',
-                          'Section 2 of 4: Physical Identification & Observable Marks',
-                          'Section 3 of 4: Contact & Primary Residential Address',
-                          'Section 4 of 4: Cultural Profile & Heritage Background',
-                        ];
-                        final activeTitle = tabTitles[_tabController.index.clamp(0, 3)];
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.info_outline, size: 14, color: colorScheme.primary),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  activeTitle,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: colorScheme.primary,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ── TAB VIEWS ──
-                    AnimatedBuilder(
-                      animation: _tabController,
-                      builder: (context, _) {
-                        switch (_tabController.index) {
-                          case 0:
-                            return _buildIdentityTab(colorScheme);
-                          case 1:
-                            return _buildPhysicalIdTab(colorScheme);
-                          case 2:
-                            return _buildContactAddressTab(colorScheme);
-                          case 3:
-                            return _buildCulturalTab(colorScheme);
-                          default:
-                            return _buildIdentityTab(colorScheme);
-                        }
-                      },
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // Save / Submit Button
-                    ElevatedButton.icon(
-                      onPressed: _isSaving ? null : _saveClientDraft,
-                      icon: _isSaving
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.cloud_upload_outlined),
-                      label: Text(
-                        _isSaving
-                            ? 'Saving & Synchronizing...'
-                            : (isEditMode ? 'Update Client Record' : 'Save & Synchronize Client File'),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: colorScheme.primary,
-                        foregroundColor: colorScheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                    const SizedBox(height: 30),
-                  ],
-                ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── STEPPER PROGRESS HEADER ──
+              AnimatedBuilder(
+                animation: _tabController,
+                builder: (context, _) => _buildStepperHeader(colorScheme, isDark),
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+
+              // ── PROPOSAL CONTEXT CARD ──
+              _buildContextCard(colorScheme),
+
+              // ── ACTIVE TAB CONTENT ──
+              AnimatedBuilder(
+                animation: _tabController,
+                builder: (context, _) {
+                  switch (_tabController.index) {
+                    case 0:
+                      return _buildIdentityTab(colorScheme);
+                    case 1:
+                      return _buildPhysicalIdTab(colorScheme);
+                    case 2:
+                      return _buildContactAddressTab(colorScheme);
+                    case 3:
+                      return _buildCulturalTab(colorScheme);
+                    default:
+                      return _buildIdentityTab(colorScheme);
+                  }
+                },
+              ),
+
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Tab 1: Identity ──────────────────────────────────────────────────
+  // ── Tab 1: Identity & Vital Information ──
   Widget _buildIdentityTab(ColorScheme colorScheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Photo Upload Box
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 30,
-                backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
-                backgroundImage: _photoFile != null
-                    ? FileImage(_photoFile!)
-                    : (_existingPhotoUrl != null && _existingPhotoUrl!.isNotEmpty
-                        ? NetworkImage(_existingPhotoUrl!) as ImageProvider
-                        : null),
-                child: (_photoFile == null && (_existingPhotoUrl == null || _existingPhotoUrl!.isEmpty))
-                    ? Text(
-                        '${_firstNameController.text.isNotEmpty ? _firstNameController.text[0] : ""}${_lastNameController.text.isNotEmpty ? _lastNameController.text[0] : "?"}',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colorScheme.primary),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        // Photo Avatar Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.camera_alt_outlined,
+          title: 'CLIENT PROFILE PHOTO',
+          subtitle: 'EXIF metadata stripped automatically for safety & privacy',
+          children: [
+            Row(
+              children: [
+                Stack(
                   children: [
-                    const Text('Profile Photo (Optional)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    const SizedBox(height: 2),
-                    Text('Supported: JPEG, PNG, WebP (EXIF-stripped)', style: TextStyle(fontSize: 10, color: colorScheme.onSurface.withValues(alpha: 0.6))),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: _showPhotoOptions,
-                          icon: const Icon(Icons.add_a_photo, size: 14),
-                          label: Text(_photoFile != null || _existingPhotoUrl != null ? 'Change' : 'Upload', style: const TextStyle(fontSize: 11)),
-                          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-                        ),
-                        if (_photoFile != null || _existingPhotoUrl != null) ...[
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () => setState(() {
-                              _photoFile = null;
-                              _existingPhotoUrl = null;
-                            }),
-                            child: const Text('Remove', style: TextStyle(color: Colors.red, fontSize: 11)),
+                    CircleAvatar(
+                      radius: 36,
+                      backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
+                      backgroundImage: _photoFile != null
+                          ? FileImage(_photoFile!)
+                          : (_existingPhotoUrl != null && _existingPhotoUrl!.isNotEmpty
+                              ? NetworkImage(_existingPhotoUrl!) as ImageProvider
+                              : null),
+                      child: (_photoFile == null && (_existingPhotoUrl == null || _existingPhotoUrl!.isEmpty))
+                          ? Text(
+                              '${_firstNameController.text.isNotEmpty ? _firstNameController.text[0] : ""}${_lastNameController.text.isNotEmpty ? _lastNameController.text[0] : "?"}',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: colorScheme.primary),
+                            )
+                          : null,
+                    ),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: InkWell(
+                        onTap: _showPhotoOptions,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
                           ),
-                        ],
-                      ],
+                          child: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-
-        // Legal First & Middle & Last Name
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _firstNameController,
-                decoration: const InputDecoration(labelText: 'Legal First Name *', border: OutlineInputBorder()),
-                validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _middleNameController,
-                decoration: const InputDecoration(labelText: 'Middle Name(s)', border: OutlineInputBorder()),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _lastNameController,
-                decoration: const InputDecoration(labelText: 'Legal Last Name *', border: OutlineInputBorder()),
-                validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Preferred & Aliases
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _preferredNameController,
-                decoration: const InputDecoration(labelText: 'Preferred / Chosen Name', border: OutlineInputBorder()),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextFormField(
-                controller: _aliasesController,
-                decoration: const InputDecoration(labelText: 'Aliases / Previous Names', hintText: 'Comma-separated', border: OutlineInputBorder()),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Date of Birth & Gender
-        Row(
-          children: [
-            Expanded(
-              child: InkWell(
-                onTap: () => _selectDob(context),
-                child: InputDecorator(
-                  decoration: const InputDecoration(labelText: 'Date of Birth', border: OutlineInputBorder(), prefixIcon: Icon(Icons.calendar_today, size: 16)),
-                  child: Text(
-                    _selectedDob != null ? DateFormat('yyyy-MM-dd').format(_selectedDob!) : 'Select DOB',
-                    style: TextStyle(fontSize: 13, color: _selectedDob != null ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: 0.5)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          FilledButton.tonalIcon(
+                            onPressed: _showPhotoOptions,
+                            icon: const Icon(Icons.add_a_photo, size: 15),
+                            label: Text(_photoFile != null || _existingPhotoUrl != null ? 'Change Photo' : 'Upload Photo'),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                          ),
+                          if (_photoFile != null || _existingPhotoUrl != null) ...[
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _photoFile = null;
+                                _existingPhotoUrl = null;
+                              }),
+                              child: const Text('Remove', style: TextStyle(color: Colors.red, fontSize: 12)),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Supports Camera capture or Gallery photos (JPEG, PNG).',
+                        style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.55)),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: _selectedGender,
-                decoration: const InputDecoration(labelText: 'Gender', border: OutlineInputBorder()),
-                items: _genderOptions.map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 12)))).toList(),
-                onChanged: (val) {
-                  if (val != null) setState(() => _selectedGender = val);
-                },
-              ),
+              ],
             ),
           ],
         ),
-        const SizedBox(height: 12),
 
-        // Place of Birth & Preferred Language
-        Row(
+        // Legal Names Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.person_outline,
+          title: 'LEGAL IDENTITY NAMES',
+          subtitle: 'Official name as recognized on provincial or treaty records',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _placeOfBirthController,
-                decoration: const InputDecoration(labelText: 'Place of Birth', hintText: 'e.g. Regina, SK', border: OutlineInputBorder()),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _firstNameController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Legal First Name *',
+                      prefixIcon: const Icon(Icons.person, size: 18),
+                    ),
+                    validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _lastNameController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Legal Last Name *',
+                      prefixIcon: const Icon(Icons.person_outline, size: 18),
+                    ),
+                    validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: _selectedLanguage,
-                decoration: const InputDecoration(labelText: 'Preferred Language', border: OutlineInputBorder()),
-                items: _languageOptions.map((l) => DropdownMenuItem(value: l, child: Text(l, style: const TextStyle(fontSize: 12)))).toList(),
-                onChanged: (val) {
-                  if (val != null) setState(() => _selectedLanguage = val);
-                },
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _middleNameController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Middle Name(s)',
+                hintText: 'e.g. Marie or Traditional Clan Name',
+                prefixIcon: const Icon(Icons.badge_outlined, size: 18),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 14),
 
-        const Divider(),
-        const SizedBox(height: 8),
-
-        // Treaty, Band, and SK Health Card (Matching Web Tab 1 footer)
-        TextFormField(
-          controller: _treatyController,
-          decoration: const InputDecoration(labelText: 'Treaty / Status Card #', hintText: '10-digit registration #', border: OutlineInputBorder(), prefixIcon: Icon(Icons.badge_outlined)),
-        ),
-        const SizedBox(height: 12),
-
-        Row(
+        // Preferred & Aliases Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.fingerprint,
+          title: 'PREFERRED NAME & KNOWN ALIASES',
+          subtitle: 'Used for daily kinship address and search resolution',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _bandNationController,
-                decoration: const InputDecoration(labelText: 'Band / First Nation', hintText: 'e.g. Zagime Anishinabek', border: OutlineInputBorder()),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextFormField(
-                controller: _healthCardController,
-                decoration: const InputDecoration(labelText: 'SK Health Card (HSN)', hintText: '9-digit HSN', border: OutlineInputBorder()),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _preferredNameController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Preferred / Chosen Name',
+                      hintText: 'e.g. Jay, Bear Child',
+                      prefixIcon: const Icon(Icons.sentiment_satisfied_alt, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _aliasesController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Aliases / Former Names',
+                      hintText: 'Comma-separated',
+                      prefixIcon: const Icon(Icons.history_edu, size: 18),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.tonalIcon(
-            onPressed: () => _tabController.animateTo(1),
-            icon: const Icon(Icons.arrow_forward, size: 16),
-            label: const Text('Next: 2. Physical ID →'),
-          ),
+
+        // Vital Statistics & Demographics Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.cake_outlined,
+          title: 'VITAL STATISTICS & DEMOGRAPHICS',
+          subtitle: 'Birth records, gender identity, and primary communication',
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _selectDob(context),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InputDecorator(
+                      decoration: _inputDeco(
+                        context,
+                        labelText: 'Date of Birth',
+                        prefixIcon: const Icon(Icons.calendar_today, size: 18),
+                      ),
+                      child: Text(
+                        _formatDobWithAge(_selectedDob),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: _selectedDob != null ? FontWeight.bold : FontWeight.normal,
+                          color: _selectedDob != null ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _selectedGender,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Gender',
+                      prefixIcon: const Icon(Icons.wc, size: 18),
+                    ),
+                    items: _genderOptions
+                        .map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 12))))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => _selectedGender = val);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _placeOfBirthController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Place of Birth',
+                      hintText: 'e.g. Regina, SK',
+                      prefixIcon: const Icon(Icons.location_city, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _selectedLanguage,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Preferred Language',
+                      prefixIcon: const Icon(Icons.translate, size: 18),
+                    ),
+                    items: _languageOptions
+                        .map((l) => DropdownMenuItem(value: l, child: Text(l, style: const TextStyle(fontSize: 12))))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => _selectedLanguage = val);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        // Official & Indigenous Identification Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.card_membership_outlined,
+          title: 'OFFICIAL & INDIGENOUS IDENTIFICATION',
+          subtitle: 'Treaty card, band registry, and provincial health coverage',
+          children: [
+            TextFormField(
+              controller: _treatyController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Treaty / Status Card #',
+                hintText: '10-digit Indian Status registration number',
+                prefixIcon: const Icon(Icons.badge, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _bandNationController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Band / First Nation',
+                      hintText: 'e.g. Cote First Nation',
+                      prefixIcon: const Icon(Icons.account_balance, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _healthCardController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'SK Health Card (HSN)',
+                      hintText: '9-digit HSN',
+                      prefixIcon: const Icon(Icons.medical_services_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ],
     );
   }
 
-  // ── Tab 2: Physical ID ───────────────────────────────────────────────
+  // ── Tab 2: Physical Identification & Observable Marks ──
   Widget _buildPhysicalIdTab(ColorScheme colorScheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Observable physical identifiers to assist staff in rapid and accurate client identification.',
-          style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.7)),
-        ),
-        const SizedBox(height: 12),
-
-        // Eye, Hair, Height, Weight
-        Row(
+        // Biometrics Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.straighten,
+          title: 'BIOMETRIC METRICS',
+          subtitle: 'Baseline physical attributes for field identification',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _eyeColourController,
-                decoration: const InputDecoration(labelText: 'Eye Colour', hintText: 'e.g. Brown', border: OutlineInputBorder()),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _eyeColourController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Eye Colour',
+                      hintText: 'e.g. Brown',
+                      prefixIcon: const Icon(Icons.remove_red_eye_outlined, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _hairColourController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Hair Colour',
+                      hintText: 'e.g. Black',
+                      prefixIcon: const Icon(Icons.face_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _heightController,
+                    keyboardType: TextInputType.number,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Height (cm)',
+                      hintText: 'e.g. 165',
+                      prefixIcon: const Icon(Icons.height, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _weightController,
+                    keyboardType: TextInputType.number,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Weight (kg)',
+                      hintText: 'e.g. 60',
+                      prefixIcon: const Icon(Icons.fitness_center_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        // Observable Features & Marks
+        _buildSectionCard(
+          context: context,
+          icon: Icons.draw_outlined,
+          title: 'OBSERVABLE BODY MARKS & ART',
+          subtitle: 'Distinguishing marks, scars, tattoos, and piercings',
+          children: [
+            TextFormField(
+              controller: _tattoosController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Tattoos & Body Art',
+                hintText: 'Location, motifs, and descriptions',
+                prefixIcon: const Icon(Icons.brush_outlined, size: 18),
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _hairColourController,
-                decoration: const InputDecoration(labelText: 'Hair Colour', hintText: 'e.g. Black', border: OutlineInputBorder()),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _piercingsController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Piercings',
+                hintText: 'Ears, facial, or body piercings',
+                prefixIcon: const Icon(Icons.adjust_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _birthmarksController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Birthmarks',
+                      hintText: 'Location and size',
+                      prefixIcon: const Icon(Icons.circle_outlined, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _scarsController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Scars / Surgical Marks',
+                      hintText: 'Location and appearance',
+                      prefixIcon: const Icon(Icons.healing_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _distinguishingMarksController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Other Distinguishing Marks',
+                hintText: 'Any other noticeable physical characteristics',
+                prefixIcon: const Icon(Icons.visibility_outlined, size: 18),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
 
-        Row(
+        // Assistive Devices & Visual Aids
+        _buildSectionCard(
+          context: context,
+          icon: Icons.visibility_outlined,
+          title: 'OPTICAL AIDS & PHYSICAL NOTES',
+          subtitle: 'Corrective lenses and special appearance notes',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _heightController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Height (cm)', hintText: 'e.g. 165', border: OutlineInputBorder()),
+            Row(
+              children: [
+                Expanded(
+                  child: SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Wears Glasses', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    value: _wearsGlasses,
+                    onChanged: (val) => setState(() => _wearsGlasses = val),
+                  ),
+                ),
+                Expanded(
+                  child: SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Wears Contacts', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    value: _wearsContacts,
+                    onChanged: (val) => setState(() => _wearsContacts = val),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _physicalNotesController,
+              maxLines: 2,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Physical Identifying Notes',
+                hintText: 'Additional physical appearance notes for caseworkers...',
+                prefixIcon: const Icon(Icons.notes, size: 18),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _weightController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Weight (kg)', hintText: 'e.g. 60', border: OutlineInputBorder()),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Tattoos & Piercings
-        TextFormField(
-          controller: _tattoosController,
-          decoration: const InputDecoration(labelText: 'Tattoos & Body Art', hintText: 'Describe locations & designs', border: OutlineInputBorder()),
-        ),
-        const SizedBox(height: 12),
-
-        TextFormField(
-          controller: _piercingsController,
-          decoration: const InputDecoration(labelText: 'Piercings', hintText: 'Describe locations', border: OutlineInputBorder()),
-        ),
-        const SizedBox(height: 12),
-
-        // Birthmarks, Scars & Distinguishing Marks
-        TextFormField(
-          controller: _birthmarksController,
-          decoration: const InputDecoration(labelText: 'Birthmarks', hintText: 'Locations and descriptions', border: OutlineInputBorder()),
-        ),
-        const SizedBox(height: 12),
-
-        TextFormField(
-          controller: _scarsController,
-          decoration: const InputDecoration(labelText: 'Scars & Surgical Marks', hintText: 'Locations and descriptions of visible marks', border: OutlineInputBorder()),
-        ),
-        const SizedBox(height: 12),
-
-        TextFormField(
-          controller: _distinguishingMarksController,
-          decoration: const InputDecoration(labelText: 'Other Distinguishing Marks', hintText: 'Notable features or assistive devices', border: OutlineInputBorder()),
-        ),
-        const SizedBox(height: 12),
-
-        // Wears Glasses / Contacts switches
-        Row(
-          children: [
-            Expanded(
-              child: SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Wears Glasses', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                value: _wearsGlasses,
-                onChanged: (val) => setState(() => _wearsGlasses = val),
-              ),
-            ),
-            Expanded(
-              child: SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Wears Contacts', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                value: _wearsContacts,
-                onChanged: (val) => setState(() => _wearsContacts = val),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-
-        TextFormField(
-          controller: _physicalNotesController,
-          maxLines: 2,
-          decoration: const InputDecoration(
-            labelText: 'Physical Identifying Notes',
-            hintText: 'Additional appearance details or physical identifying notes...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _tabController.animateTo(0),
-              icon: const Icon(Icons.arrow_back, size: 16),
-              label: const Text('← 1. Identity'),
-            ),
-            FilledButton.tonalIcon(
-              onPressed: () => _tabController.animateTo(2),
-              icon: const Icon(Icons.arrow_forward, size: 16),
-              label: const Text('Next: 3. Contact →'),
             ),
           ],
         ),
@@ -1229,159 +1526,187 @@ class _ClientDraftScreenState extends State<ClientDraftScreen> with SingleTicker
     );
   }
 
-  // ── Tab 3: Contact & Address ─────────────────────────────────────────
+  // ── Tab 3: Contact & Primary Residential Address ──
   Widget _buildContactAddressTab(ColorScheme colorScheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Primary Phone & Email
-        Row(
+        // Direct Contact Information Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.contact_phone_outlined,
+          title: 'DIRECT CLIENT CONTACT',
+          subtitle: 'Active phone and electronic communication channels',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Primary Phone', hintText: '306-555-0100', border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone, size: 16)),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Primary Phone',
+                      hintText: '306-555-0100',
+                      prefixIcon: const Icon(Icons.phone, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Email Address',
+                      hintText: 'client@example.ca',
+                      prefixIcon: const Icon(Icons.email_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextFormField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: 'Email Address', hintText: 'client@example.ca', border: OutlineInputBorder(), prefixIcon: Icon(Icons.email, size: 16)),
+          ],
+        ),
+
+        // Emergency Contact Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.contact_emergency_outlined,
+          title: 'EMERGENCY CONTACT',
+          subtitle: 'Immediate family or designated caregiver for urgent outreach',
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: TextFormField(
+                    controller: _emergNameController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Contact Full Name',
+                      hintText: 'Full legal name',
+                      prefixIcon: const Icon(Icons.person, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 4,
+                  child: TextFormField(
+                    controller: _emergPhoneController,
+                    keyboardType: TextInputType.phone,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Phone Number',
+                      hintText: '306-555-0199',
+                      prefixIcon: const Icon(Icons.phone_in_talk, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _emergRelController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Relationship to Client',
+                hintText: 'e.g. Grandmother, Auntie, Older Sibling, Foster Parent',
+                prefixIcon: const Icon(Icons.family_restroom, size: 18),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
 
-        // EMERGENCY CONTACT CARD (Matching Web Screenshot)
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'EMERGENCY CONTACT',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colorScheme.onSurface.withValues(alpha: 0.7), letterSpacing: 0.5),
+        // Primary Residential Address Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.home_outlined,
+          title: 'PRIMARY RESIDENTIAL ADDRESS',
+          subtitle: 'Current physical living location and territory',
+          children: [
+            TextFormField(
+              controller: _address1Controller,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Street Address',
+                hintText: '123 5th Avenue',
+                prefixIcon: const Icon(Icons.signpost_outlined, size: 18),
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _emergNameController,
-                      decoration: const InputDecoration(labelText: 'Name', hintText: 'Full name', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _address2Controller,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Address Line 2 (Apt / Suite / Unit #)',
+                hintText: 'Suite 4B',
+                prefixIcon: const Icon(Icons.apartment_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _cityController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'City',
+                      prefixIcon: const Icon(Icons.location_city, size: 18),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _emergPhoneController,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(labelText: 'Phone', hintText: 'Phone number', border: OutlineInputBorder()),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _provinceController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Province',
+                      prefixIcon: const Icon(Icons.map_outlined, size: 18),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _emergRelController,
-                      decoration: const InputDecoration(labelText: 'Relationship', hintText: 'e.g. Grandmother, Aunt', border: OutlineInputBorder()),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _postalCodeController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Postal Code',
+                      hintText: 'S4P 3Y2',
+                      prefixIcon: const Icon(Icons.local_post_office_outlined, size: 18),
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // PRIMARY RESIDENTIAL ADDRESS CARD (Matching Web Screenshot)
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'PRIMARY RESIDENTIAL ADDRESS',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colorScheme.onSurface.withValues(alpha: 0.7), letterSpacing: 0.5),
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _address1Controller,
-                decoration: const InputDecoration(labelText: 'Street Address', hintText: '123 5th Ave', border: OutlineInputBorder(), prefixIcon: Icon(Icons.home, size: 16)),
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _address2Controller,
-                decoration: const InputDecoration(labelText: 'Address Line 2 (Apt / Suite / House #)', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _cityController,
-                      decoration: const InputDecoration(labelText: 'City', border: OutlineInputBorder()),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _isOnReserve ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _isOnReserve ? Colors.blue.shade400 : Colors.grey.shade300,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _provinceController,
-                      decoration: const InputDecoration(labelText: 'Province', border: OutlineInputBorder()),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _postalCodeController,
-                      decoration: const InputDecoration(labelText: 'Postal Code', hintText: 'S4P 3Y2', border: OutlineInputBorder()),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
                     child: SwitchListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Located On-Reserve', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      title: const Text('Located On-Reserve', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                       value: _isOnReserve,
                       onChanged: (val) => setState(() => _isOnReserve = val),
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _tabController.animateTo(1),
-              icon: const Icon(Icons.arrow_back, size: 16),
-              label: const Text('← 2. Physical ID'),
-            ),
-            FilledButton.tonalIcon(
-              onPressed: () => _tabController.animateTo(3),
-              icon: const Icon(Icons.arrow_forward, size: 16),
-              label: const Text('Next: 4. Cultural →'),
+                ),
+              ],
             ),
           ],
         ),
@@ -1389,139 +1714,150 @@ class _ClientDraftScreenState extends State<ClientDraftScreen> with SingleTicker
     );
   }
 
-  // ── Tab 4: Cultural & Background ─────────────────────────────────────
+  // ── Tab 4: Cultural Profile & Heritage Background ──
   Widget _buildCulturalTab(ColorScheme colorScheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Cultural identity, customary connections, and socioeconomic context honoring Indigenous family heritage.',
-          style: TextStyle(fontSize: 11, color: colorScheme.onSurface.withValues(alpha: 0.7)),
-        ),
-        const SizedBox(height: 14),
-
-        // Cultural & Community Connections
-        TextFormField(
-          controller: _culturalConnectionsController,
-          maxLines: 2,
-          decoration: const InputDecoration(
-            labelText: 'Cultural & Community Connections',
-            hintText: 'Band affiliations, clan, or urban Indigenous community ties...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Ceremonies & Customary Practices
-        TextFormField(
-          controller: _ceremoniesController,
-          maxLines: 2,
-          decoration: const InputDecoration(
-            labelText: 'Ceremonies & Customary Practices',
-            hintText: 'Round dances, sweats, smudging, seasonal gatherings...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Elders / Knowledge Keepers Connected With
-        TextFormField(
-          controller: _eldersConnectedController,
-          decoration: const InputDecoration(
-            labelText: 'Elders / Knowledge Keepers Connected With',
-            hintText: 'Names or communities of connected Elders',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Land-Based Activities
-        TextFormField(
-          controller: _landActivitiesController,
-          decoration: const InputDecoration(
-            labelText: 'Land-Based Activities',
-            hintText: 'Hunting, fishing, medicine picking, trapping...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Dietary Needs & Extracurricular Activities
-        Row(
+        // Cultural & Customary Life Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.nature_people_outlined,
+          title: 'CULTURAL CONNECTIONS & CEREMONY',
+          subtitle: 'Community kinship, ceremonial traditions, and customary practices',
           children: [
-            Expanded(
-              child: TextFormField(
-                controller: _dietaryController,
-                decoration: const InputDecoration(labelText: 'Dietary Needs & Preferences', hintText: 'Traditional foods, allergies', border: OutlineInputBorder()),
+            TextFormField(
+              controller: _culturalConnectionsController,
+              maxLines: 2,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Cultural & Community Connections',
+                hintText: 'Clan connections, band affiliations, urban Indigenous community ties...',
+                prefixIcon: const Icon(Icons.groups, size: 18),
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _extraCurricularController,
-                decoration: const InputDecoration(labelText: 'Extracurricular Activities', hintText: 'Sports, arts, music, powwow', border: OutlineInputBorder()),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _ceremoniesController,
+              maxLines: 2,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Ceremonies & Customary Practices',
+                hintText: 'Round dances, sweats, smudging, seasonal sundances, feasts...',
+                prefixIcon: const Icon(Icons.wb_sunny_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _eldersConnectedController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Elders / Knowledge Keepers Connected With',
+                hintText: 'Names and home communities of connected Elders',
+                prefixIcon: const Icon(Icons.elderly_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _landActivitiesController,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Land-Based Activities',
+                hintText: 'Hunting, fishing, medicine picking, trapping, berry harvesting...',
+                prefixIcon: const Icon(Icons.terrain_outlined, size: 18),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
 
-        // SOCIOECONOMIC BACKGROUND CARD (Matching Web Tab 4)
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'SOCIOECONOMIC BACKGROUND',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colorScheme.onSurface.withValues(alpha: 0.7), letterSpacing: 0.5),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedEmploymentStatus.isNotEmpty ? _selectedEmploymentStatus : null,
-                decoration: const InputDecoration(labelText: 'Employment Status', border: OutlineInputBorder()),
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('-- Select Status --')),
-                  ..._employmentStatuses.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 12)))),
-                ],
-                onChanged: (val) {
-                  setState(() => _selectedEmploymentStatus = val ?? '');
-                },
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _employerController,
-                      decoration: const InputDecoration(labelText: 'Employer / School', hintText: 'Organization name', border: OutlineInputBorder()),
+        // Personal Interests & Holistic Wellness
+        _buildSectionCard(
+          context: context,
+          icon: Icons.sports_basketball_outlined,
+          title: 'NUTRITION & EXTRACURRICULAR INTERESTS',
+          subtitle: 'Traditional dietary preferences and recreational growth',
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _dietaryController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Dietary Needs & Traditional Foods',
+                      hintText: 'Wild meat, fish, allergies',
+                      prefixIcon: const Icon(Icons.restaurant_outlined, size: 18),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _sourceOfIncomeController,
-                      decoration: const InputDecoration(labelText: 'Source of Income', hintText: 'e.g. Employment, SIS, SAID, EI', border: OutlineInputBorder()),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _extraCurricularController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Extracurricular Activities',
+                      hintText: 'Sports, powwow, arts, music',
+                      prefixIcon: const Icon(Icons.palette_outlined, size: 18),
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            onPressed: () => _tabController.animateTo(2),
-            icon: const Icon(Icons.arrow_back, size: 16),
-            label: const Text('← 3. Contact & Address'),
-          ),
+
+        // Socioeconomic Background Card
+        _buildSectionCard(
+          context: context,
+          icon: Icons.account_balance_wallet_outlined,
+          title: 'SOCIOECONOMIC & LIVELIHOOD CONTEXT',
+          subtitle: 'Employment, education, and financial stability context',
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _selectedEmploymentStatus.isNotEmpty ? _selectedEmploymentStatus : null,
+              decoration: _inputDeco(
+                context,
+                labelText: 'Employment / Student Status',
+                prefixIcon: const Icon(Icons.work_outline, size: 18),
+              ),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('-- Select Status --')),
+                ..._employmentStatuses.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))),
+              ],
+              onChanged: (val) {
+                setState(() => _selectedEmploymentStatus = val ?? '');
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _employerController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Employer / School',
+                      hintText: 'Organization name',
+                      prefixIcon: const Icon(Icons.school_outlined, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _sourceOfIncomeController,
+                    decoration: _inputDeco(
+                      context,
+                      labelText: 'Source of Income',
+                      hintText: 'Employment, SIS, SAID, EI',
+                      prefixIcon: const Icon(Icons.payments_outlined, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ],
     );

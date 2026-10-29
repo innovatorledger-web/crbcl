@@ -73,6 +73,12 @@ def _populate_client_response(
         res.decided_by = dec.id
         res.decided_by_name = (dec.display_name or dec.full_name or "").strip()
 
+    res.is_deleted = client.is_deleted
+    res.deleted_at = client.deleted_at
+    if client.deleted_at:
+        days_in_trash = (datetime.now(UTC) - client.deleted_at).days
+        res.days_until_purge = max(0, 45 - days_in_trash)
+
     return res
 
 
@@ -196,6 +202,18 @@ class CulturalProfileUpdate(BaseModel):
 # ── Client Base Endpoints ────────────────────────────────────
 
 
+@router.get("/counts", response_model=dict[str, int])
+async def get_client_counts(
+    user: User = Depends(require_permission(Permissions.CLIENT_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve aggregate counts for client directory filter tabs including Trash."""
+    perm_service = PermissionService(db)
+    accessible_team_ids = await perm_service.get_user_accessible_team_ids(user.id)
+    repo = ClientRepository(db)
+    return await repo.get_status_counts(accessible_team_ids=accessible_team_ids)
+
+
 @router.get("", response_model=PaginatedResponse[ClientResponse])
 async def list_clients(
     request: Request,
@@ -204,6 +222,7 @@ async def list_clients(
     approval_status: str | None = Query(default=None, description="Filter by approval status: APPROVED, PENDING_APPROVAL, RETURNED, DECLINED"),
     risk_level: str | None = Query(default=None),
     team_id: uuid.UUID | None = Query(default=None),
+    trash: bool = Query(default=False, description="Whether to fetch soft-deleted clients currently in trash"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     sort: str | None = Query(default=None),
@@ -228,6 +247,7 @@ async def list_clients(
         offset=offset,
         limit=limit,
         sort_by=sort,
+        trash=trash,
     )
 
     return PaginatedResponse[ClientResponse](
@@ -1055,15 +1075,17 @@ async def merge_duplicate_persons(
 async def get_client(
     client_id: uuid.UUID,
     request: Request,
+    allow_deleted: bool = Query(default=False, description="Allow viewing deleted client from trash if authorized"),
     user: User = Depends(require_permission(Permissions.CLIENT_READ)),
     db: AsyncSession = Depends(get_db),
 ):
     person_service = PersonService(db)
     await person_service.assert_client_role_authorized(user, "read client")
 
-    repo = ClientRepository(db)
-    client = await repo.get(client_id)
-    if not client or client.is_deleted:
+    stmt = select(Client).where(Client.id == client_id)
+    res = await db.execute(stmt)
+    client = res.scalar_one_or_none()
+    if not client or (client.is_deleted and not allow_deleted):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": "CLIENT_NOT_FOUND", "message": "Client not found"}},
@@ -1573,4 +1595,74 @@ async def delete_client(
 
     await db.commit()
     return None
+
+
+@router.post("/{client_id}/restore", response_model=ClientResponse)
+async def restore_client(
+    client_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a soft-deleted client record from the trash back to active service."""
+    stmt = select(Client).where(Client.id == client_id)
+    res = await db.execute(stmt)
+    client = res.scalar_one_or_none()
+    if not client or client.deleted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "CLIENT_NOT_IN_TRASH", "message": "Client record is not in trash"}},
+        )
+
+    client.deleted_at = None
+
+    audit_service = AuditService(db)
+    await audit_service.log_event(
+        event_type="CLIENT_RESTORED",
+        user_id=user.id,
+        entity_type="client",
+        entity_id=client.id,
+        after_data={"first_name": client.first_name, "last_name": client.last_name, "status": client.status},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    await db.commit()
+    return _populate_client_response(client)
+
+
+@router.delete("/{client_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def permanently_delete_client(
+    client_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a client record from the trash, purging it completely."""
+    stmt = select(Client).where(Client.id == client_id)
+    res = await db.execute(stmt)
+    client = res.scalar_one_or_none()
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "CLIENT_NOT_FOUND", "message": "Client record not found"}},
+        )
+
+    audit_service = AuditService(db)
+    await audit_service.log_event(
+        event_type="CLIENT_PURGED_PERMANENTLY",
+        user_id=user.id,
+        entity_type="client",
+        entity_id=client.id,
+        before_data={
+            "first_name": client.first_name,
+            "last_name": client.last_name,
+            "deleted_at": client.deleted_at.isoformat() if client.deleted_at else None,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    await db.delete(client)
+    await db.commit()
+    return None
+
 
