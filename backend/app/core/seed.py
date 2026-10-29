@@ -591,6 +591,7 @@ ROLE_PERMISSIONS_MAP = {
         Permissions.CLIENT_READ,
         Permissions.CLIENT_CREATE,
         Permissions.CLIENT_UPDATE,
+        Permissions.CLIENT_DELETE,
         Permissions.CLIENT_SUBMIT,
         Permissions.CLIENT_APPROVE,
         Permissions.CLIENT_RETURN,
@@ -723,6 +724,7 @@ ROLE_PERMISSIONS_MAP = {
         Permissions.CLIENT_READ,
         Permissions.CLIENT_CREATE,
         Permissions.CLIENT_UPDATE,
+        Permissions.CLIENT_DELETE,
         Permissions.CLIENT_SUBMIT,
         Permissions.CLIENT_APPROVE,
         Permissions.CLIENT_RETURN,
@@ -1180,6 +1182,7 @@ ROLE_PERMISSIONS_MAP = {
     ],
     "resource_supervisor": [
         Permissions.CLIENT_READ,
+        Permissions.CLIENT_DELETE,
         Permissions.CLIENT_SUBMIT,
         Permissions.CLIENT_APPROVE,
         Permissions.CLIENT_RETURN,
@@ -1244,6 +1247,7 @@ ROLE_PERMISSIONS_MAP = {
     ],
     "resource_director": [
         Permissions.CLIENT_READ,
+        Permissions.CLIENT_DELETE,
         Permissions.CLIENT_SUBMIT,
         Permissions.CLIENT_APPROVE,
         Permissions.CLIENT_RETURN,

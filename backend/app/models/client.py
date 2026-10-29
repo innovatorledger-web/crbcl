@@ -63,17 +63,33 @@ class Client(Base, AuditMixin, SoftDeleteMixin):
         "ClientApprovalHistory",
         back_populates="client",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         order_by="ClientApprovalHistory.created_at.desc()",
     )
     medical_profile: Mapped[ClientMedicalProfile | None] = relationship(  # noqa: F821
-        "ClientMedicalProfile", back_populates=None, uselist=False, lazy="selectin"
+        "ClientMedicalProfile",
+        back_populates=None,
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
     )
-    allergies: Mapped[list[ClientAllergy]] = relationship("ClientAllergy", lazy="selectin")  # noqa: F821
-    conditions: Mapped[list[ClientMedicalCondition]] = relationship("ClientMedicalCondition", lazy="selectin")  # noqa: F821
-    medications: Mapped[list[ClientMedication]] = relationship("ClientMedication", lazy="selectin")  # noqa: F821
-    providers: Mapped[list[ClientProvider]] = relationship("ClientProvider", lazy="selectin")  # noqa: F821
-    school_enrolments: Mapped[list[ClientSchoolEnrolment]] = relationship("ClientSchoolEnrolment", lazy="selectin")  # noqa: F821
+    allergies: Mapped[list[ClientAllergy]] = relationship(  # noqa: F821
+        "ClientAllergy", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
+    conditions: Mapped[list[ClientMedicalCondition]] = relationship(  # noqa: F821
+        "ClientMedicalCondition", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
+    medications: Mapped[list[ClientMedication]] = relationship(  # noqa: F821
+        "ClientMedication", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
+    providers: Mapped[list[ClientProvider]] = relationship(  # noqa: F821
+        "ClientProvider", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
+    school_enrolments: Mapped[list[ClientSchoolEnrolment]] = relationship(  # noqa: F821
+        "ClientSchoolEnrolment", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
 
     __table_args__ = (
         Index("ix_clients_name_trgm", "first_name", "last_name"),

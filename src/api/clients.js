@@ -6,11 +6,15 @@ export const clientsApi = {
   create: (data) => api.entities.Client.create(data),
   update: (id, data) => api.patch(`/api/v1/clients/${id}`, data),
   delete: async (id) => {
-    try {
-      const res = await api.fetch(`/api/v1/clients/${id}`, { method: 'DELETE' });
-      if (res.ok || res.status === 204) return true;
-    } catch (_) {}
-    return api.entities.Client.delete(id);
+    const res = await api.fetch(`/api/v1/clients/${id}`, { method: 'DELETE' });
+    if (res.ok || res.status === 204) return true;
+    const data = await res.json().catch(() => ({}));
+    const msg =
+      data?.detail?.error?.message ||
+      data?.error?.message ||
+      (typeof data?.detail === 'string' ? data.detail : null) ||
+      'Could not delete client record.';
+    throw new Error(msg);
   },
 
   uploadPhoto: async (clientId, file) => {
@@ -184,21 +188,33 @@ export const clientsApi = {
   getCounts: () =>
     api.fetch('/api/v1/clients/counts').then(res => res.json()).catch(() => null),
 
-  restore: (id) =>
-    api.fetch(`/api/v1/clients/${id}/restore`, {
+  restore: async (id) => {
+    const res = await api.fetch(`/api/v1/clients/${id}/restore`, {
       method: 'POST',
-    }).then(async res => {
-      const data = await res.json();
-      if (!res.ok) throw data;
-      return data;
-    }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        data?.detail?.error?.message ||
+        data?.error?.message ||
+        (typeof data?.detail === 'string' ? data.detail : null) ||
+        'Could not restore client record.';
+      throw new Error(msg);
+    }
+    return data;
+  },
 
-  permanentDelete: (id) =>
-    api.fetch(`/api/v1/clients/${id}/permanent`, {
+  permanentDelete: async (id) => {
+    const res = await api.fetch(`/api/v1/clients/${id}/permanent`, {
       method: 'DELETE',
-    }).then(async res => {
-      if (res.ok || res.status === 204) return true;
-      const data = await res.json().catch(() => ({}));
-      throw data;
-    }),
+    });
+    if (res.ok || res.status === 204) return true;
+    const data = await res.json().catch(() => ({}));
+    const msg =
+      data?.detail?.error?.message ||
+      data?.error?.message ||
+      (typeof data?.detail === 'string' ? data.detail : null) ||
+      'Could not permanently delete client record.';
+    throw new Error(msg);
+  },
 };

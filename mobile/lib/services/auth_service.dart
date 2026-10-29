@@ -948,7 +948,56 @@ class MobileAuthService {
   static bool isEmailAdmin(String? email) {
     if (email == null || email.trim().isEmpty) return false;
     final lower = email.trim().toLowerCase();
-    return lower == 'admin@crbcl.ca' || lower.contains('admin');
+    return lower == 'admin@crbcl.ca' || lower.startsWith('admin@');
+  }
+
+  static const Set<String> _supervisorUpwardRoles = {
+    'supervisor',
+    'resource_supervisor',
+    'director_manager',
+    'resource_director',
+    'director',
+    'manager',
+    'executive_director',
+    'ceo',
+    'chief_executive_officer',
+    'it_admin',
+    'admin',
+    'administrator',
+    'system_admin',
+    'super_admin',
+    'system administrator',
+  };
+
+  /// Check if the currently logged-in user has supervisor or upward authority to delete/restore clients
+  Future<bool> canDeleteClients() async {
+    final user = await getCurrentUser();
+    final email = (user['email']?.toString() ?? '').trim().toLowerCase();
+    if (email == 'admin@crbcl.ca' || email.startsWith('admin@')) {
+      return true;
+    }
+
+    final rawRoles = user['roles'];
+    if (rawRoles is List) {
+      for (final r in rawRoles) {
+        final normalized = (r is Map ? (r['key'] ?? r['name'] ?? '') : r).toString().trim().toLowerCase();
+        if (_supervisorUpwardRoles.contains(normalized)) {
+          return true;
+        }
+      }
+    }
+
+    final rawPerms = user['permissions'];
+    if (rawPerms is List) {
+      for (final p in rawPerms) {
+        final permStr = p.toString().trim().toLowerCase();
+        if (permStr == 'client.delete' || permStr == 'client.approve') {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /// Check whether an administrator PIN has been configured

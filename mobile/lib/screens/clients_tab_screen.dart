@@ -21,6 +21,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
   final _authService = MobileAuthService.instance;
 
   bool _isLoading = true;
+  bool _canDelete = false;
   String _searchQuery = '';
   String _activeFilter = 'ALL'; // ALL, APPROVED, PENDING, OFFLINE
 
@@ -40,6 +41,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
     });
 
     final isOnline = await ConnectivityService.instance.checkConnectivity();
+    final canDelete = await _authService.canDeleteClients();
 
     final List<Map<String, dynamic>> combinedList = [];
 
@@ -139,61 +141,63 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
             }
           }
 
-          // B. Fetch Trash Clients (soft-deleted in last 45 days)
-          try {
-            final trashUri = Uri.parse('$serverUrl/api/v1/clients?trash=true&limit=100');
-            final trashResponse = await http.get(
-              trashUri,
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
-            ).timeout(const Duration(seconds: 15));
+          // B. Fetch Trash Clients (soft-deleted in last 45 days) — restricted to supervisors upward
+          if (canDelete) {
+            try {
+              final trashUri = Uri.parse('$serverUrl/api/v1/clients?trash=true&limit=100');
+              final trashResponse = await http.get(
+                trashUri,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+              ).timeout(const Duration(seconds: 15));
 
-            if (trashResponse.statusCode == 200) {
-              final trashData = jsonDecode(trashResponse.body);
-              final trashItems = trashData is Map && trashData['items'] is List
-                  ? trashData['items'] as List
-                  : (trashData is List ? trashData : []);
+              if (trashResponse.statusCode == 200) {
+                final trashData = jsonDecode(trashResponse.body);
+                final trashItems = trashData is Map && trashData['items'] is List
+                    ? trashData['items'] as List
+                    : (trashData is List ? trashData : []);
 
-              for (final item in trashItems) {
-                if (item is Map) {
-                  final mapItem = Map<String, dynamic>.from(item);
-                  combinedList.add({
-                    'id': mapItem['id'],
-                    'is_remote': true,
-                    'is_trash': true,
-                    'days_until_purge': mapItem['days_until_purge'] ?? 45,
-                    'deleted_at': mapItem['deleted_at'],
-                    'first_name': mapItem['first_name'] ?? '',
-                    'last_name': mapItem['last_name'] ?? '',
-                    'middle_name': mapItem['middle_name'],
-                    'preferred_name': mapItem['preferred_name'],
-                    'aliases': mapItem['aliases'],
-                    'person_id': mapItem['person_id'],
-                    'person_id_number': mapItem['person_id_number'] ?? 'PENDING-ID',
-                    'approval_status': (mapItem['approval_status'] ?? 'APPROVED').toString().toUpperCase(),
-                    'status': 'In Trash',
-                    'risk_level': mapItem['risk_level'] ?? 'Low',
-                    'band_nation': mapItem['band_nation'] ?? 'First Nations',
-                    'city': mapItem['city'] ?? 'Regina',
-                    'province': mapItem['province'] ?? 'SK',
-                    'date_of_birth': mapItem['date_of_birth'],
-                    'gender': mapItem['gender'],
-                    'phone': mapItem['phone'],
-                    'email': mapItem['email'],
-                    'photo_url': mapItem['photo_url'],
-                    'submission_notes': mapItem['submission_notes'],
-                    'submitted_by_name': mapItem['submitted_by_name'],
-                    'decided_by_name': mapItem['decided_by_name'],
-                    'raw_payload': mapItem,
-                    'sync_status': 'TRASH',
-                  });
+                for (final item in trashItems) {
+                  if (item is Map) {
+                    final mapItem = Map<String, dynamic>.from(item);
+                    combinedList.add({
+                      'id': mapItem['id'],
+                      'is_remote': true,
+                      'is_trash': true,
+                      'days_until_purge': mapItem['days_until_purge'] ?? 45,
+                      'deleted_at': mapItem['deleted_at'],
+                      'first_name': mapItem['first_name'] ?? '',
+                      'last_name': mapItem['last_name'] ?? '',
+                      'middle_name': mapItem['middle_name'],
+                      'preferred_name': mapItem['preferred_name'],
+                      'aliases': mapItem['aliases'],
+                      'person_id': mapItem['person_id'],
+                      'person_id_number': mapItem['person_id_number'] ?? 'PENDING-ID',
+                      'approval_status': (mapItem['approval_status'] ?? 'APPROVED').toString().toUpperCase(),
+                      'status': 'In Trash',
+                      'risk_level': mapItem['risk_level'] ?? 'Low',
+                      'band_nation': mapItem['band_nation'] ?? 'First Nations',
+                      'city': mapItem['city'] ?? 'Regina',
+                      'province': mapItem['province'] ?? 'SK',
+                      'date_of_birth': mapItem['date_of_birth'],
+                      'gender': mapItem['gender'],
+                      'phone': mapItem['phone'],
+                      'email': mapItem['email'],
+                      'photo_url': mapItem['photo_url'],
+                      'submission_notes': mapItem['submission_notes'],
+                      'submitted_by_name': mapItem['submitted_by_name'],
+                      'decided_by_name': mapItem['decided_by_name'],
+                      'raw_payload': mapItem,
+                      'sync_status': 'TRASH',
+                    });
+                  }
                 }
               }
+            } catch (_) {
+              // Trash query error fallback
             }
-          } catch (_) {
-            // Trash query error fallback
           }
         }
       } catch (err) {
@@ -203,6 +207,10 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
 
     if (mounted) {
       setState(() {
+        _canDelete = canDelete;
+        if (!canDelete && _activeFilter == 'TRASH') {
+          _activeFilter = 'ALL';
+        }
         _clients = combinedList;
         _isLoading = false;
       });
@@ -255,7 +263,10 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
           final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId');
           final response = await http.delete(
             uri,
-            headers: {'Authorization': 'Bearer $token'},
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
           ).timeout(const Duration(seconds: 15));
 
           if (response.statusCode != 200 && response.statusCode != 204) {
@@ -332,7 +343,10 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
         final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId/restore');
         final response = await http.post(
           uri,
-          headers: {'Authorization': 'Bearer $token'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
         ).timeout(const Duration(seconds: 15));
 
         if (response.statusCode != 200 && response.statusCode != 204) {
@@ -406,7 +420,10 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
         final uri = Uri.parse('$serverUrl/api/v1/clients/$clientId/permanent');
         final response = await http.delete(
           uri,
-          headers: {'Authorization': 'Bearer $token'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
         ).timeout(const Duration(seconds: 15));
 
         if (response.statusCode != 200 && response.statusCode != 204) {
@@ -463,7 +480,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
               onPressed: () => Navigator.pop(ctx),
             ),
             actions: [
-              if (client['is_trash'] == true) ...[
+              if (client['is_trash'] == true && _canDelete) ...[
                 IconButton(
                   icon: const Icon(Icons.restore, color: Colors.green),
                   tooltip: 'Restore Client',
@@ -480,7 +497,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                     _permanentDeleteClient(client);
                   },
                 ),
-              ] else ...[
+              ] else if (client['is_trash'] != true) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
                   tooltip: 'Edit Client',
@@ -489,14 +506,15 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                     _editClient(client);
                   },
                 ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  tooltip: 'Move to Trash',
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _deleteClient(client);
-                  },
-                ),
+                if (_canDelete)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    tooltip: 'Move to Trash',
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _deleteClient(client);
+                    },
+                  ),
               ],
             ],
           ),
@@ -907,24 +925,26 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                             selected: _activeFilter == 'OFFLINE',
                             onSelected: (_) => setState(() => _activeFilter = 'OFFLINE'),
                           ),
-                          const SizedBox(width: 8),
-                          ChoiceChip(
-                            avatar: Icon(
-                              Icons.delete_outline,
-                              size: 15,
-                              color: _activeFilter == 'TRASH' ? Colors.white : Colors.red.shade700,
-                            ),
-                            label: Text(
-                              'Trash ($trashCount)',
-                              style: TextStyle(
+                          if (_canDelete) ...[
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              avatar: Icon(
+                                Icons.delete_outline,
+                                size: 15,
                                 color: _activeFilter == 'TRASH' ? Colors.white : Colors.red.shade700,
-                                fontWeight: FontWeight.bold,
                               ),
+                              label: Text(
+                                'Trash ($trashCount)',
+                                style: TextStyle(
+                                  color: _activeFilter == 'TRASH' ? Colors.white : Colors.red.shade700,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              selected: _activeFilter == 'TRASH',
+                              selectedColor: Colors.red.shade700,
+                              onSelected: (_) => setState(() => _activeFilter = 'TRASH'),
                             ),
-                            selected: _activeFilter == 'TRASH',
-                            selectedColor: Colors.red.shade700,
-                            onSelected: (_) => setState(() => _activeFilter = 'TRASH'),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -1139,7 +1159,7 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                   const Divider(height: 1),
                                   const SizedBox(height: 8),
 
-                                  if (client['is_trash'] == true) ...[
+                                  if (client['is_trash'] == true && _canDelete) ...[
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
@@ -1147,7 +1167,12 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                         OutlinedButton.icon(
                                           onPressed: () => _permanentDeleteClient(client),
                                           icon: const Icon(Icons.delete_forever, size: 15, color: Colors.red),
-                                          label: const Text('Delete Permanently', style: TextStyle(color: Colors.red, fontSize: 11)),
+                                          label: const Text(
+                                            'Delete Permanently',
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            style: TextStyle(color: Colors.red, fontSize: 11),
+                                          ),
                                           style: OutlinedButton.styleFrom(
                                             side: BorderSide(color: Colors.red.shade300),
                                             visualDensity: VisualDensity.compact,
@@ -1161,7 +1186,12 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                             ElevatedButton.icon(
                                               onPressed: () => _restoreClient(client),
                                               icon: const Icon(Icons.restore, size: 15),
-                                              label: const Text('Restore', style: TextStyle(fontSize: 12)),
+                                              label: const Text(
+                                                'Restore',
+                                                maxLines: 1,
+                                                softWrap: false,
+                                                style: TextStyle(fontSize: 12),
+                                              ),
                                               style: ElevatedButton.styleFrom(
                                                 backgroundColor: Colors.green.shade700,
                                                 foregroundColor: Colors.white,
@@ -1184,13 +1214,16 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        // Delete Button
-                                        IconButton(
-                                          icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                                          tooltip: 'Move to Trash',
-                                          visualDensity: VisualDensity.compact,
-                                          onPressed: () => _deleteClient(client),
-                                        ),
+                                        // Delete Button (Supervisors upward only)
+                                        if (_canDelete)
+                                          IconButton(
+                                            icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                                            tooltip: 'Move to Trash',
+                                            visualDensity: VisualDensity.compact,
+                                            onPressed: () => _deleteClient(client),
+                                          )
+                                        else
+                                          const SizedBox.shrink(),
 
                                         // Edit and View Profile Buttons
                                         Row(
@@ -1198,14 +1231,19 @@ class _ClientsTabScreenState extends State<ClientsTabScreen> {
                                             TextButton.icon(
                                               onPressed: () => _editClient(client),
                                               icon: const Icon(Icons.edit_outlined, size: 16),
-                                              label: const Text('Edit', style: TextStyle(fontSize: 12)),
+                                              label: const Text('Edit', maxLines: 1, softWrap: false, style: TextStyle(fontSize: 12)),
                                               style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
                                             ),
                                             const SizedBox(width: 4),
                                             ElevatedButton.icon(
                                               onPressed: () => _viewClientProfile(client),
                                               icon: const Icon(Icons.arrow_forward, size: 14),
-                                              label: const Text('View Profile', style: TextStyle(fontSize: 12)),
+                                              label: const Text(
+                                                'View Profile',
+                                                maxLines: 1,
+                                                softWrap: false,
+                                                style: TextStyle(fontSize: 12),
+                                              ),
                                               style: ElevatedButton.styleFrom(
                                                 backgroundColor: colorScheme.primary,
                                                 foregroundColor: colorScheme.onPrimary,

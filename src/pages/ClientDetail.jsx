@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { clientsApi, casesApi } from '@/api';
+import { api, clientsApi, casesApi } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,38 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+const SUPERVISOR_UPWARD_ROLES = [
+  "supervisor",
+  "resource_supervisor",
+  "director_manager",
+  "resource_director",
+  "director",
+  "manager",
+  "executive_director",
+  "ceo",
+  "chief_executive_officer",
+  "it_admin",
+  "admin",
+  "administrator",
+  "system_admin",
+  "super_admin",
+  "system administrator",
+];
+
+function hasSupervisorOrAboveAuthority(u) {
+  if (!u || typeof u !== "object") return false;
+  const email = String(u?.email || "").toLowerCase().trim();
+  if (email === "admin@crbcl.ca" || email.startsWith("admin@")) return true;
+  const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
+  const normalized = roles.map((r) =>
+    String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim()
+  );
+  if (normalized.some((r) => SUPERVISOR_UPWARD_ROLES.includes(r))) return true;
+  const perms = Array.isArray(u?.permissions) ? u.permissions : [];
+  if (perms.includes("client.delete") || perms.includes("client.approve")) return true;
+  return false;
+}
+
 export default function ClientDetail() {
 
   const { id } = useParams();
@@ -61,21 +93,22 @@ export default function ClientDetail() {
   const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
   const tabsScrollRef = useRef(null);
 
-  const [canDelete] = useState(() => {
+  const [canDelete, setCanDelete] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
-      const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
-      const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
-      const email = String(u?.email || "").toLowerCase().trim();
-      return (
-        email === "admin@crbcl.ca" ||
-        email.includes("admin") ||
-        normalized.some(r => ["it_admin", "admin", "administrator", "system administrator", "executive_director", "ceo", "supervisor"].includes(r))
-      );
+      return hasSupervisorOrAboveAuthority(u);
     } catch {
-      return true;
+      return false;
     }
   });
+
+  useEffect(() => {
+    api?.auth?.me?.().then((u) => {
+      if (u) {
+        setCanDelete(hasSupervisorOrAboveAuthority(u));
+      }
+    }).catch(() => {});
+  }, []);
 
   const scrollTabs = (direction) => {
     if (tabsScrollRef.current) {
@@ -298,16 +331,16 @@ export default function ClientDetail() {
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-0 border-border/60">
             {client.is_deleted ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsRestoreDialogOpen(true)}
-                  className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                >
-                  <RotateCcw className="w-4 h-4" /> Restore Client
-                </Button>
-                {canDelete && (
+              canDelete && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsRestoreDialogOpen(true)}
+                    className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                  >
+                    <RotateCcw className="w-4 h-4" /> Restore Client
+                  </Button>
                   <Button
                     variant="destructive"
                     size="sm"
@@ -316,8 +349,8 @@ export default function ClientDetail() {
                   >
                     <Trash2 className="w-4 h-4" /> Delete Permanently
                   </Button>
-                )}
-              </>
+                </>
+              )
             ) : (
               <>
                 <Button
@@ -350,7 +383,7 @@ export default function ClientDetail() {
       </div>
 
       {/* Trash Notice Banner */}
-      {client.is_deleted && (
+      {client.is_deleted && canDelete && (
         <div className="bg-destructive/10 border-2 border-destructive/40 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-destructive">
           <div className="flex items-center gap-3">
             <Trash2 className="w-6 h-6 shrink-0" />

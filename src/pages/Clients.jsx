@@ -24,6 +24,38 @@ import { clientsApi } from "@/api/clients";
 import { api } from "@/api";
 import { useToast } from "@/components/ui/use-toast";
 
+const SUPERVISOR_UPWARD_ROLES = [
+  "supervisor",
+  "resource_supervisor",
+  "director_manager",
+  "resource_director",
+  "director",
+  "manager",
+  "executive_director",
+  "ceo",
+  "chief_executive_officer",
+  "it_admin",
+  "admin",
+  "administrator",
+  "system_admin",
+  "super_admin",
+  "system administrator",
+];
+
+function hasSupervisorOrAboveAuthority(u) {
+  if (!u || typeof u !== "object") return false;
+  const email = String(u?.email || "").toLowerCase().trim();
+  if (email === "admin@crbcl.ca" || email.startsWith("admin@")) return true;
+  const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
+  const normalized = roles.map((r) =>
+    String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim()
+  );
+  if (normalized.some((r) => SUPERVISOR_UPWARD_ROLES.includes(r))) return true;
+  const perms = Array.isArray(u?.permissions) ? u.permissions : [];
+  if (perms.includes("client.delete") || perms.includes("client.approve")) return true;
+  return false;
+}
+
 export default function Clients() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -44,27 +76,18 @@ export default function Clients() {
   const [canApprove, setCanApprove] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
-      const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
-      const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
-      return normalized.some(r => ["supervisor", "director_manager", "executive_director", "ceo", "it_admin", "admin"].includes(r));
+      return hasSupervisorOrAboveAuthority(u);
     } catch {
       return false;
     }
   });
 
-  const [canDelete] = useState(() => {
+  const [canDelete, setCanDelete] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("crbcl_current_user") || "{}");
-      const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
-      const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
-      const email = String(u?.email || "").toLowerCase().trim();
-      return (
-        email === "admin@crbcl.ca" ||
-        email.includes("admin") ||
-        normalized.some(r => ["it_admin", "admin", "administrator", "system administrator", "executive_director", "ceo", "supervisor"].includes(r))
-      );
+      return hasSupervisorOrAboveAuthority(u);
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -172,9 +195,9 @@ export default function Clients() {
     loadClients(activeTab);
     api?.auth?.me?.().then(u => {
       if (u) {
-        const roles = Array.isArray(u?.roles) ? u.roles : (u?.role ? [u.role] : []);
-        const normalized = roles.map(r => String(typeof r === "string" ? r : (r?.key || r?.name || "")).toLowerCase().trim());
-        setCanApprove(normalized.some(r => ["supervisor", "director_manager", "executive_director", "ceo", "it_admin", "admin"].includes(r)));
+        const allowed = hasSupervisorOrAboveAuthority(u);
+        setCanApprove(allowed);
+        setCanDelete(allowed);
       }
     }).catch(() => {});
   }, []);
@@ -324,7 +347,7 @@ export default function Clients() {
         </div>
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full sm:w-auto">
-          <TabsList className="flex overflow-x-auto no-scrollbar sm:grid sm:grid-cols-5 h-10 bg-muted/60 p-1 w-full sm:w-auto">
+          <TabsList className={`flex overflow-x-auto no-scrollbar sm:grid ${canDelete ? "sm:grid-cols-5" : "sm:grid-cols-4"} h-10 bg-muted/60 p-1 w-full sm:w-auto`}>
             <TabsTrigger value="ALL" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial">
               All ({counts.all})
             </TabsTrigger>
@@ -337,10 +360,12 @@ export default function Clients() {
             <TabsTrigger value="RETURNED" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial">
               Returned ({counts.returned})
             </TabsTrigger>
-            <TabsTrigger value="TRASH" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial text-rose-700 dark:text-rose-400 gap-1.5 font-medium">
-              <Trash2 className="w-3.5 h-3.5" />
-              Trash ({counts.trash})
-            </TabsTrigger>
+            {canDelete && (
+              <TabsTrigger value="TRASH" className="text-xs px-2.5 sm:px-3 py-1.5 whitespace-nowrap flex-1 sm:flex-initial text-rose-700 dark:text-rose-400 gap-1.5 font-medium">
+                <Trash2 className="w-3.5 h-3.5" />
+                Trash ({counts.trash})
+              </TabsTrigger>
+            )}
           </TabsList>
         </Tabs>
       </div>
@@ -459,104 +484,108 @@ export default function Clients() {
                 </div>
 
                 {/* Card Footer: Submitter / Approval Audit & Actions */}
-                <div className="mt-4 pt-3 border-t border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                  <div className="truncate">
-                    {c.approval_status === "PENDING_APPROVAL" && c.submitted_by_name ? (
-                      <span className="font-medium text-amber-700 dark:text-amber-400">
-                        Submitted by {c.submitted_by_name}
-                      </span>
-                    ) : c.approval_status === "APPROVED" && c.decided_by_name ? (
-                      <span>Approved by {c.decided_by_name}</span>
-                    ) : (
-                      <span>Status: {c.status || "Active"}</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
-                    {activeTab === "TRASH" ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setClientToRestore(c);
-                          }}
-                          className="h-7 px-2.5 text-xs gap-1.5 text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 border-emerald-300/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold"
-                          title="Restore client from trash"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>Restore</span>
-                        </Button>
-
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setClientToPurge(c);
-                          }}
-                          className="h-7 px-2.5 text-xs gap-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold"
-                          title="Permanently erase client"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>Delete Permanently</span>
-                        </Button>
+                <div className="mt-4 pt-3 border-t border-border/60 flex flex-col gap-2 text-[11px] text-muted-foreground">
+                  {activeTab !== "TRASH" &&
+                    ((c.approval_status === "PENDING_APPROVAL" && c.submitted_by_name) ||
+                      (c.approval_status === "APPROVED" && c.decided_by_name)) && (
+                      <div className="truncate">
+                        {c.approval_status === "PENDING_APPROVAL" && c.submitted_by_name ? (
+                          <span className="font-medium text-amber-700 dark:text-amber-400">
+                            Submitted by {c.submitted_by_name}
+                          </span>
+                        ) : (
+                          <span>Approved by {c.decided_by_name}</span>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        {c.approval_status === "PENDING_APPROVAL" && canApprove && (
-                          <span
+                    )}
+
+                  <div className="flex items-center justify-between gap-2 w-full">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {activeTab === "TRASH" && canDelete ? (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              navigate(`/intake/approvals?tab=clients&reviewId=${c.id}`);
+                              setClientToRestore(c);
                             }}
-                            className="text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 font-semibold inline-flex items-center gap-1 cursor-pointer bg-amber-50 dark:bg-amber-950/40 px-2 py-1 rounded-md border border-amber-200 dark:border-amber-800/50"
+                            className="h-7 px-2.5 text-xs gap-1.5 text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 border-emerald-300/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold whitespace-nowrap shrink-0"
+                            title="Restore client from trash"
                           >
-                            <Clock className="w-3 h-3" />
-                            Review Proposal
-                          </span>
-                        )}
+                            <RotateCcw className="w-3 h-3 shrink-0" />
+                            <span>Restore</span>
+                          </Button>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setEditingClient(c);
-                          }}
-                          className="h-7 px-2 text-xs gap-1 hover:text-foreground text-muted-foreground"
-                        >
-                          <Pencil className="w-3 h-3" />
-                          <span>Edit</span>
-                        </Button>
-
-                        {canDelete && (
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setClientToDelete(c);
+                              setClientToPurge(c);
                             }}
-                            className="h-7 px-2 text-xs gap-1 text-destructive/80 hover:text-destructive hover:bg-destructive/10"
-                            title="Move to trash (45 days retention)"
+                            className="h-7 px-2.5 text-xs gap-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold whitespace-nowrap shrink-0"
+                            title="Permanently erase client"
                           >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Delete</span>
+                            <Trash2 className="w-3 h-3 shrink-0" />
+                            <span>Delete Permanently</span>
                           </Button>
-                        )}
-                      </>
-                    )}
+                        </>
+                      ) : (
+                        <>
+                          {c.approval_status === "PENDING_APPROVAL" && canApprove && (
+                            <span
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigate(`/intake/approvals?tab=clients&reviewId=${c.id}`);
+                              }}
+                              className="text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 font-semibold inline-flex items-center gap-1 cursor-pointer bg-amber-50 dark:bg-amber-950/40 px-2 py-1 rounded-md border border-amber-200 dark:border-amber-800/50 whitespace-nowrap shrink-0"
+                            >
+                              <Clock className="w-3 h-3 shrink-0" />
+                              Review Proposal
+                            </span>
+                          )}
 
-                    <div className="flex items-center text-primary font-medium group-hover:translate-x-1 transition-transform ml-auto sm:ml-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingClient(c);
+                            }}
+                            className="h-7 px-2 text-xs gap-1 hover:text-foreground text-muted-foreground whitespace-nowrap shrink-0"
+                          >
+                            <Pencil className="w-3 h-3 shrink-0" />
+                            <span>Edit</span>
+                          </Button>
+
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setClientToDelete(c);
+                              }}
+                              className="h-7 px-2 text-xs gap-1 text-destructive/80 hover:text-destructive hover:bg-destructive/10 whitespace-nowrap shrink-0"
+                              title="Move to trash (45 days retention)"
+                            >
+                              <Trash2 className="w-3 h-3 shrink-0" />
+                              <span>Delete</span>
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    <div className="inline-flex items-center whitespace-nowrap shrink-0 text-primary font-medium group-hover:translate-x-1 transition-transform ml-auto">
                       <span>View Profile</span>
-                      <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                      <ArrowRight className="w-3.5 h-3.5 ml-1 shrink-0" />
                     </div>
                   </div>
                 </div>

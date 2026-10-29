@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.service import AuditService
@@ -76,7 +77,8 @@ def _populate_client_response(
     res.is_deleted = client.is_deleted
     res.deleted_at = client.deleted_at
     if client.deleted_at:
-        days_in_trash = (datetime.now(UTC) - client.deleted_at).days
+        del_dt = client.deleted_at if client.deleted_at.tzinfo else client.deleted_at.replace(tzinfo=UTC)
+        days_in_trash = (datetime.now(UTC) - del_dt).days
         res.days_until_purge = max(0, 45 - days_in_trash)
 
     return res
@@ -211,7 +213,14 @@ async def get_client_counts(
     perm_service = PermissionService(db)
     accessible_team_ids = await perm_service.get_user_accessible_team_ids(user.id)
     repo = ClientRepository(db)
-    return await repo.get_status_counts(accessible_team_ids=accessible_team_ids)
+    counts = await repo.get_status_counts(accessible_team_ids=accessible_team_ids)
+    can_manage_trash = (
+        await perm_service.user_has_permission(user.id, Permissions.CLIENT_DELETE)
+        or await perm_service.user_has_permission(user.id, Permissions.CLIENT_APPROVE)
+    )
+    if not can_manage_trash:
+        counts["trash"] = 0
+    return counts
 
 
 @router.get("", response_model=PaginatedResponse[ClientResponse])
@@ -234,6 +243,17 @@ async def list_clients(
     await person_service.assert_client_role_authorized(user, "list Clients")
 
     perm_service = PermissionService(db)
+    if trash:
+        can_manage_trash = (
+            await perm_service.user_has_permission(user.id, Permissions.CLIENT_DELETE)
+            or await perm_service.user_has_permission(user.id, Permissions.CLIENT_APPROVE)
+        )
+        if not can_manage_trash:
+            return PaginatedResponse[ClientResponse](
+                items=[],
+                pagination=PaginationMeta(total=0, limit=limit, offset=offset, has_more=False),
+            )
+
     accessible_team_ids = await perm_service.get_user_accessible_team_ids(user.id)
 
     repo = ClientRepository(db)
@@ -1569,7 +1589,7 @@ async def get_client_timeline(
 async def delete_client(
     client_id: uuid.UUID,
     request: Request,
-    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_APPROVE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Admin or authorized supervisor/director soft-deletes a client record."""
@@ -1601,32 +1621,45 @@ async def delete_client(
 async def restore_client(
     client_id: uuid.UUID,
     request: Request,
-    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_APPROVE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted client record from the trash back to active service."""
     stmt = select(Client).where(Client.id == client_id)
     res = await db.execute(stmt)
     client = res.scalar_one_or_none()
-    if not client or client.deleted_at is None:
+    if not client:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": "CLIENT_NOT_IN_TRASH", "message": "Client record is not in trash"}},
+            detail={"error": {"code": "CLIENT_NOT_FOUND", "message": "Client record not found"}},
         )
 
-    client.deleted_at = None
+    if client.deleted_at is not None:
+        # Prevent unique index violation if another active client was linked to the same person_id while in trash
+        if client.person_id is not None:
+            conflict_stmt = select(Client.id).where(
+                Client.person_id == client.person_id,
+                Client.deleted_at.is_(None),
+                Client.id != client.id,
+            )
+            conflict_res = await db.execute(conflict_stmt)
+            if conflict_res.first() is not None:
+                client.person_id = None
 
-    audit_service = AuditService(db)
-    await audit_service.log_event(
-        event_type="CLIENT_RESTORED",
-        user_id=user.id,
-        entity_type="client",
-        entity_id=client.id,
-        after_data={"first_name": client.first_name, "last_name": client.last_name, "status": client.status},
-        ip_address=request.client.host if request.client else None,
-    )
+        client.deleted_at = None
 
-    await db.commit()
+        audit_service = AuditService(db)
+        await audit_service.log_event(
+            event_type="CLIENT_RESTORED",
+            user_id=user.id,
+            entity_type="client",
+            entity_id=client.id,
+            after_data={"first_name": client.first_name, "last_name": client.last_name, "status": client.status},
+            ip_address=request.client.host if request.client else None,
+        )
+
+        await db.commit()
+
     return _populate_client_response(client)
 
 
@@ -1634,10 +1667,24 @@ async def restore_client(
 async def permanently_delete_client(
     client_id: uuid.UUID,
     request: Request,
-    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_UPDATE)),
+    user: User = Depends(require_any_permission(Permissions.CLIENT_DELETE, Permissions.CLIENT_APPROVE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a client record from the trash, purging it completely."""
+    from app.models.assessment import Assessment
+    from app.models.case import Case
+    from app.models.fleet import VehicleTrip
+    from app.models.medical import (
+        ClientAllergy,
+        ClientMedicalCondition,
+        ClientMedicalProfile,
+        ClientMedication,
+    )
+    from app.models.provider import ClientProvider
+    from app.models.school import ClientSchoolEnrolment
+    from app.models.sprint_b_models import Appointment, ClinicalNote, Incident
+    from app.models.timeline import TimelineEvent
+
     stmt = select(Client).where(Client.id == client_id)
     res = await db.execute(stmt)
     client = res.scalar_one_or_none()
@@ -1661,7 +1708,24 @@ async def permanently_delete_client(
         ip_address=request.client.host if request.client else None,
     )
 
-    await db.delete(client)
+    # Explicitly purge dependent records and unlink optional foreign keys to ensure clean permanent deletion
+    await db.execute(delete(ClientApprovalHistory).where(ClientApprovalHistory.client_id == client_id))
+    await db.execute(delete(ClientMedicalProfile).where(ClientMedicalProfile.client_id == client_id))
+    await db.execute(delete(ClientAllergy).where(ClientAllergy.client_id == client_id))
+    await db.execute(delete(ClientMedicalCondition).where(ClientMedicalCondition.client_id == client_id))
+    await db.execute(delete(ClientMedication).where(ClientMedication.client_id == client_id))
+    await db.execute(delete(ClientProvider).where(ClientProvider.client_id == client_id))
+    await db.execute(delete(ClientSchoolEnrolment).where(ClientSchoolEnrolment.client_id == client_id))
+    await db.execute(delete(ClinicalNote).where(ClinicalNote.client_id == client_id))
+
+    await db.execute(update(Assessment).where(Assessment.client_id == client_id).values(client_id=None))
+    await db.execute(update(VehicleTrip).where(VehicleTrip.client_id == client_id).values(client_id=None))
+    await db.execute(update(Incident).where(Incident.client_id == client_id).values(client_id=None))
+    await db.execute(update(Appointment).where(Appointment.client_id == client_id).values(client_id=None))
+    await db.execute(update(Case).where(Case.client_id == client_id).values(client_id=None))
+    await db.execute(update(TimelineEvent).where(TimelineEvent.client_id == client_id).values(client_id=None))
+
+    await db.execute(delete(Client).where(Client.id == client_id))
     await db.commit()
     return None
 
