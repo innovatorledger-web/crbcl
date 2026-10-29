@@ -160,7 +160,11 @@ export default function Profile() {
           resolve(canvas.toDataURL("image/jpeg", quality));
         };
         img.onerror = reject;
-        img.src = e.target.result;
+        if (typeof e.target?.result === "string") {
+          img.src = e.target.result;
+        } else {
+          reject(new Error("Failed to read image file"));
+        }
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
