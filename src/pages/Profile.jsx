@@ -132,8 +132,43 @@ export default function Profile() {
     }
   };
 
-  // Handle avatar photo selection and conversion
-  const handleFileChange = (e) => {
+  // Helper to resize/compress avatar image to lightweight, sharp WebP/JPEG data URL (~40KB)
+  const compressImage = (file, maxWidth = 400, maxHeight = 400, quality = 0.85) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handle avatar photo selection, conversion, and instant automatic save
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -146,30 +181,75 @@ export default function Profile() {
       return;
     }
 
-    if (file.size > 4 * 1024 * 1024) {
+    if (file.size > 10 * 1024 * 1024) {
       toast({
         title: "File too large",
-        description: "Please upload an image smaller than 4MB.",
+        description: "Please upload an image smaller than 10MB.",
         variant: "destructive",
       });
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64Data = event.target?.result;
-      if (base64Data && typeof base64Data === "string") {
-        setAvatarUrl(base64Data);
-      }
-    };
-    reader.readAsDataURL(file);
+    setSavingProfile(true);
+    try {
+      const compressedData = await compressImage(file, 400, 400, 0.85);
+      setAvatarUrl(compressedData);
+
+      // Instantly persist to backend so refresh retains the photo 100%
+      const updated = await api.auth.updateProfile({
+        full_name: fullName.trim() || user?.full_name,
+        display_name: displayName.trim() || user?.display_name || null,
+        phone: phone.trim() || user?.phone || null,
+        avatar_url: compressedData,
+      });
+
+      setUser(updated);
+      window.dispatchEvent(new Event("crbcl_profile_updated"));
+
+      toast({
+        title: "Profile Photo Saved",
+        description: "Your profile picture has been updated and synchronized.",
+      });
+    } catch (err) {
+      console.error("Failed to save avatar photo:", err);
+      toast({
+        title: "Upload Failed",
+        description: err.message || "Could not save profile photo. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingProfile(false);
+    }
   };
 
-  // Handle removing profile photo
-  const handleRemovePhoto = () => {
+  // Handle removing profile photo with instant auto-save
+  const handleRemovePhoto = async () => {
+    setSavingProfile(true);
     setAvatarUrl("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    try {
+      const updated = await api.auth.updateProfile({
+        full_name: fullName.trim() || user?.full_name,
+        display_name: displayName.trim() || user?.display_name || null,
+        phone: phone.trim() || user?.phone || null,
+        avatar_url: null,
+      });
+      setUser(updated);
+      window.dispatchEvent(new Event("crbcl_profile_updated"));
+      toast({
+        title: "Profile Photo Removed",
+        description: "Your profile picture has been cleared.",
+      });
+    } catch (err) {
+      toast({
+        title: "Failed to Remove Photo",
+        description: err.message || "Could not clear photo.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -290,13 +370,20 @@ export default function Profile() {
                 </AvatarFallback>
               </Avatar>
 
+              {savingProfile && (
+                <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center pointer-events-none z-10">
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={savingProfile}
                 aria-label="Upload photo"
-                className="absolute bottom-0 right-0 p-2 rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-transform active:scale-95 cursor-pointer"
+                className="absolute bottom-0 right-0 p-2 rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-transform active:scale-95 cursor-pointer z-20"
               >
-                <Camera className="w-4 h-4" />
+                {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
               </button>
               <input
                 ref={fileInputRef}
@@ -322,28 +409,23 @@ export default function Profile() {
                 </div>
               </div>
 
-              {/* Roles Badges */}
+              {/* Roles Badges - Strictly IT Admin, Executive Director, CEO */}
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 pt-1">
-                {roles.map((r) => (
-                  <span
-                    key={r}
-                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20 capitalize"
-                  >
-                    <Shield className="w-3 h-3" />
-                    {r.replace("_", " ")}
-                  </span>
-                ))}
-                {teamAccess.includes("all") ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-secondary-foreground border">
-                    <Users className="w-3 h-3" />
-                    All Teams Access
-                  </span>
-                ) : teamAccess.length > 0 ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-secondary-foreground border">
-                    <Users className="w-3 h-3" />
-                    {teamAccess.length} Team{teamAccess.length > 1 ? "s" : ""} Assigned
-                  </span>
-                ) : null}
+                {roles
+                  .filter((r) => ["it_admin", "executive_director", "ceo", "admin"].includes(String(r).toLowerCase()))
+                  .map((r) => {
+                    const key = String(r).toLowerCase();
+                    const label = key === "it_admin" || key === "admin" ? "IT Admin" : key === "ceo" ? "CEO" : "Executive Director";
+                    return (
+                      <span
+                        key={key}
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20"
+                      >
+                        <Shield className="w-3 h-3" />
+                        {label}
+                      </span>
+                    );
+                  })}
               </div>
             </div>
           </div>

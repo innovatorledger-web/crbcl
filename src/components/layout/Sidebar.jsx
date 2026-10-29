@@ -75,56 +75,15 @@ const getNavItems = (userRoles = [], userEmail = "", userPermissions = []) => {
 
   const items = [];
 
-  // IT Admins always get the Admin & IT Portal at the top
+  // Dedicated Portals strictly for the 3 authorized roles: IT Admin, CEO, and Executive Director
   if (isItAdmin) {
     items.push({ label: "Admin & IT Portal", icon: Shield, path: "/admin" });
   }
-
-  // Staff Dashboard is universally accessible to all staff, including administrators
-  items.push({ label: "Staff Dashboard", icon: LayoutDashboard, path: "/" });
-
-  // Leadership Dashboards: strictly restricted to leadership roles
   if (isCEO) {
     items.push({ label: "CEO Dashboard", icon: Crown, path: "/ceo" });
   }
-  if (isExecutive || isCEO) {
+  if (isExecutive) {
     items.push({ label: "Executive Dashboard", icon: TrendingUp, path: "/executive" });
-  }
-  if (isDirector || isExecutive || isCEO) {
-    items.push({ label: "Director's Dashboard", icon: Building, path: "/director" });
-  }
-  if (isCEO || isExecutive) {
-    items.push({ label: "Board Portal", icon: Landmark, path: "/board" });
-  }
-
-  // Navigator Dashboard: operational navigator role, leadership oversight, or Administrator
-  if (isNavigator || isDirector || isExecutive || isCEO || isItAdmin) {
-    items.push({ label: "Navigator Dashboard", icon: Compass, path: "/navigator" });
-  }
-
-  // Front Desk / First Impression: operational triage (Front Desk, Navigators, Leadership oversight, IT Admin, or explicit capability)
-  if (isFrontDesk || isNavigator || isDirector || isExecutive || isCEO || hasPublicIntakeRead || isItAdmin) {
-    items.push({ label: "Front Desk / First Impression", icon: ConciergeBell, path: "/front-desk" });
-  }
-
-  // Office Coordinator Workspace: dedicated operational coordination workspace
-  if (isOfficeCoordinator || isDirector || isExecutive || isCEO || hasOfficeCoordRead || isItAdmin) {
-    items.push({ label: "Office Coordinator", icon: Building, path: "/office-coordinator" });
-  }
-
-  // Internal Intake: explicitly accessible to Front Desk & Navigators, leadership oversight, IT Admin, or explicit capability
-  if (isFrontDesk || isNavigator || isDirector || isExecutive || isCEO || hasIntakeRead || isItAdmin) {
-    items.push({ label: "Intake & Referrals", icon: Inbox, path: "/intake" });
-  }
-
-  // Approvals Queue: clearly discoverable for supervisors, directors, executives, CEO, and IT Admin
-  if (isSupervisor || isDirector || isExecutive || isCEO || hasIntakeApprove || isItAdmin) {
-    items.push({ label: "Approvals Queue", icon: Clock, path: "/intake/approvals" });
-  }
-
-  // HR Dashboard: dedicated workspace for HR personnel, leadership, and IT Admin
-  if (isHR || isDirector || isExecutive || isCEO || hasHrRead || isItAdmin) {
-    items.push({ label: "HR Dashboard", icon: UserCog, path: "/hr" });
   }
 
   items.push(

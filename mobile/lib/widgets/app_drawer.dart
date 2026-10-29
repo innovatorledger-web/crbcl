@@ -38,6 +38,13 @@ class _AppDrawerState extends State<AppDrawer> {
     }
   }
 
+  String _getRoleLabel(Map<String, dynamic> user, List<String> roles) {
+    final r = (user['role'] as String? ?? '').toLowerCase();
+    if (r.contains('ceo') || roles.contains('ceo')) return 'CEO';
+    if (r.contains('executive') || roles.contains('executive_director')) return 'Executive Director';
+    return 'IT Admin';
+  }
+
   void _navigateToTab(int index) {
     Navigator.pop(context); // Close drawer
     if (widget.onTabSelected != null) {
@@ -145,6 +152,23 @@ class _AppDrawerState extends State<AppDrawer> {
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _getRoleLabel(_user, roles),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
                 ],

@@ -23,7 +23,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _otpController = TextEditingController();
 
   String? _selectedDepartment;
-  String _selectedRole = 'caseworker';
+  String _selectedRole = 'it_admin';
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -58,27 +58,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
     'Administration',
   ];
 
-  // Canonical CRBCL Staff Roles from src/constants/roles.js
+  // Canonical CRBCL Staff Roles: strictly IT Admin, Executive Director, CEO
   static const List<Map<String, String>> canonicalRoles = [
-    {'key': 'caseworker', 'label': 'Caseworker — Direct Client & Case Management'},
-    {'key': 'supervisor', 'label': 'Supervisor — Casework Approvals & Reviews'},
-    {'key': 'director_manager', 'label': 'Director / Manager — Departmental Operations'},
-    {'key': 'front_desk', 'label': 'Front Desk / First Impression — Intake Reception & Form Triage'},
-    {'key': 'office_coordinator', 'label': 'Office Coordinator — Operations, Facilities & Fleet Coordination'},
-    {'key': 'navigator', 'label': 'Navigator — System Navigation Specialist & Referral Intake'},
-    {'key': 'resource_worker', 'label': 'Resource Worker — Kinship & Foster Caregiver Recruitment'},
-    {'key': 'resource_supervisor', 'label': 'Resource Supervisor — Approvals & Recruitment Reviews'},
-    {'key': 'resource_director', 'label': 'Resource Director — Resource Unit Leadership & Licensing'},
-    {'key': 'cultural_worker', 'label': 'Cultural Worker — Cultural Supports & Elders'},
-    {'key': 'clinical_staff', 'label': 'Clinical Staff — Medical & Therapy'},
-    {'key': 'case_aide', 'label': 'Case Aide — Support Worker'},
-    {'key': 'finance_staff', 'label': 'Finance Staff — Billing & Invoices'},
-    {'key': 'hr_staff', 'label': 'HR Staff — Human Resources & Personnel Management'},
-    {'key': 'it_admin', 'label': 'IT Administrator — Standalone System Admin'},
-    {'key': 'executive_director', 'label': 'Executive Director — Cross-Agency Leadership'},
-    {'key': 'ceo', 'label': 'Chief Executive Officer (CEO) — Strategic Leadership & Governance'},
-    {'key': 'board_member', 'label': 'Board Member — Governance Oversight & Review'},
-    {'key': 'external_worker', 'label': 'External Worker — Partner Agency Access'},
+    {'key': 'it_admin', 'label': 'IT Admin — System Administrator'},
+    {'key': 'executive_director', 'label': 'Executive Director — Agency Leadership'},
+    {'key': 'ceo', 'label': 'CEO — Chief Executive Officer'},
   ];
 
   @override
@@ -546,7 +530,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Select your staff position (e.g. Front Desk, Office Coordinator, Caseworker, Supervisor). Role selection is reviewed and approved by an IT Administrator.',
+          'Select your role (IT Admin, Executive Director, or CEO). Role assignment is authenticated and managed by an IT Administrator.',
           style: TextStyle(
             fontSize: 11,
             color: colorScheme.onSurface.withValues(alpha: 0.55),

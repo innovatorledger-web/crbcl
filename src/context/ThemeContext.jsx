@@ -4,20 +4,20 @@ import { api } from '@/api';
 const THEME_STORAGE_KEY = 'crbcl_theme_preferences';
 
 export const VALID_ACCENTS = [
-  { key: 'crbcl', label: 'CRBCL Crimson (Default)', color: '#8B2626', bgHsl: '4 60% 38%' },
-  { key: 'burgundy', label: 'Deep Burgundy', color: '#821D30', bgHsl: '348 60% 32%' },
-  { key: 'earth', label: 'Warm Earth & Clay', color: '#9E4A22', bgHsl: '24 65% 38%' },
-  { key: 'forest', label: 'Evergreen & Sage', color: '#267344', bgHsl: '145 50% 30%' },
-  { key: 'prairie', label: 'Prairie Sun & Gold', color: '#A57313', bgHsl: '38 80% 36%' },
-  { key: 'ocean', label: 'Deep River Blue', color: '#245C99', bgHsl: '215 65% 40%' },
-  { key: 'teal', label: 'Boreal Spruce Teal', color: '#217A6C', bgHsl: '174 60% 32%' },
-  { key: 'neutral', label: 'Refined Slate', color: '#485669', bgHsl: '220 20% 35%' },
-  { key: 'pink', label: 'Pink', color: '#D81B60', bgHsl: '335 78% 46%' },
-  { key: 'light-pink', label: 'Light Pink', color: '#E57399', bgHsl: '340 68% 54%' },
-  { key: 'purple', label: 'Purple', color: '#7B1FA2', bgHsl: '280 65% 38%' },
-  { key: 'light-purple', label: 'Light Purple', color: '#9575CD', bgHsl: '265 55% 48%' },
-  { key: 'sky-blue', label: 'Sky Blue', color: '#0284C7', bgHsl: '199 88% 38%' },
-  { key: 'yellow', label: 'Yellow', color: '#D97706', bgHsl: '43 90% 38%' },
+  { key: 'crbcl', label: 'CRBCL Crimson (Default)', color: '#8B2626', bgHsl: '4 60% 38%', darkHsl: '4 55% 50%', sidebarHsl: '4 60% 50%', fgHsl: '0 0% 100%' },
+  { key: 'burgundy', label: 'Deep Burgundy', color: '#821D30', bgHsl: '348 60% 32%', darkHsl: '348 55% 48%', sidebarHsl: '348 60% 45%', fgHsl: '0 0% 100%' },
+  { key: 'earth', label: 'Warm Earth & Clay', color: '#9E4A22', bgHsl: '24 65% 38%', darkHsl: '24 60% 50%', sidebarHsl: '24 65% 48%', fgHsl: '0 0% 100%' },
+  { key: 'forest', label: 'Evergreen & Sage', color: '#267344', bgHsl: '145 50% 30%', darkHsl: '145 45% 44%', sidebarHsl: '145 50% 42%', fgHsl: '0 0% 100%' },
+  { key: 'prairie', label: 'Prairie Sun & Gold', color: '#A57313', bgHsl: '38 80% 36%', darkHsl: '38 75% 48%', sidebarHsl: '38 80% 48%', fgHsl: '0 0% 100%' },
+  { key: 'ocean', label: 'Deep River Blue', color: '#245C99', bgHsl: '215 65% 40%', darkHsl: '215 60% 52%', sidebarHsl: '215 65% 50%', fgHsl: '0 0% 100%' },
+  { key: 'teal', label: 'Boreal Spruce Teal', color: '#217A6C', bgHsl: '174 60% 32%', darkHsl: '174 55% 44%', sidebarHsl: '174 60% 42%', fgHsl: '0 0% 100%' },
+  { key: 'neutral', label: 'Refined Slate', color: '#485669', bgHsl: '220 20% 35%', darkHsl: '220 18% 52%', sidebarHsl: '220 20% 45%', fgHsl: '0 0% 100%' },
+  { key: 'pink', label: 'Pink', color: '#D81B60', bgHsl: '335 78% 46%', darkHsl: '335 75% 58%', sidebarHsl: '335 75% 52%', fgHsl: '0 0% 100%' },
+  { key: 'light-pink', label: 'Light Pink', color: '#E57399', bgHsl: '340 68% 54%', darkHsl: '340 75% 68%', sidebarHsl: '340 68% 60%', fgHsl: '0 0% 100%' },
+  { key: 'purple', label: 'Purple', color: '#7B1FA2', bgHsl: '280 65% 38%', darkHsl: '280 60% 56%', sidebarHsl: '280 65% 48%', fgHsl: '0 0% 100%' },
+  { key: 'light-purple', label: 'Light Purple', color: '#9575CD', bgHsl: '265 55% 48%', darkHsl: '265 65% 66%', sidebarHsl: '265 55% 56%', fgHsl: '0 0% 100%' },
+  { key: 'sky-blue', label: 'Sky Blue', color: '#0284C7', bgHsl: '199 88% 38%', darkHsl: '199 80% 52%', sidebarHsl: '199 88% 46%', fgHsl: '0 0% 100%' },
+  { key: 'yellow', label: 'Yellow', color: '#EAB308', bgHsl: '45 96% 45%', darkHsl: '45 95% 52%', sidebarHsl: '45 96% 45%', fgHsl: '20 20% 10%' },
 ];
 
 export const DEFAULT_PREFERENCES = {
@@ -65,7 +65,7 @@ export function ThemeProvider({ children }) {
   // Compute active dark mode state
   const isDark = preferences.theme_mode === 'dark' || (preferences.theme_mode === 'system' && systemIsDark);
 
-  // Apply DOM classes immediately whenever preferences or system dark changes
+  // Apply DOM classes and inline CSS properties immediately whenever preferences or system dark changes
   useEffect(() => {
     const root = document.documentElement;
 
@@ -84,6 +84,12 @@ export function ThemeProvider({ children }) {
         }
       });
       root.classList.add('theme-crbcl');
+      root.style.removeProperty('--primary');
+      root.style.removeProperty('--ring');
+      root.style.removeProperty('--sidebar-primary');
+      root.style.removeProperty('--sidebar-ring');
+      root.style.removeProperty('--primary-foreground');
+      root.style.removeProperty('--sidebar-primary-foreground');
       return;
     }
 
@@ -94,7 +100,7 @@ export function ThemeProvider({ children }) {
       root.classList.remove('dark');
     }
 
-    // Accent theme
+    // Accent theme classes
     VALID_ACCENTS.forEach(({ key }) => {
       root.classList.remove(`theme-${key}`);
       if (key.includes('-')) {
@@ -102,10 +108,21 @@ export function ThemeProvider({ children }) {
       }
     });
     const currentAccent = preferences.accent_theme ? preferences.accent_theme.replace('_', '-') : 'crbcl';
-    const validKey = VALID_ACCENTS.some((a) => a.key === currentAccent)
-      ? currentAccent
-      : 'crbcl';
+    const activeAccent = VALID_ACCENTS.find((a) => a.key === currentAccent) || VALID_ACCENTS[0];
+    const validKey = activeAccent.key;
     root.classList.add(`theme-${validKey}`);
+
+    // Apply inline CSS variables to guarantee instant, unpurgeable theme styling across all components
+    const primaryHsl = isDark ? (activeAccent.darkHsl || activeAccent.bgHsl) : activeAccent.bgHsl;
+    const sidebarPrimaryHsl = isDark ? (activeAccent.darkSidebarHsl || activeAccent.sidebarHsl || activeAccent.bgHsl) : (activeAccent.sidebarHsl || activeAccent.bgHsl);
+    const fgHsl = activeAccent.fgHsl || '0 0% 100%';
+
+    root.style.setProperty('--primary', primaryHsl);
+    root.style.setProperty('--ring', primaryHsl);
+    root.style.setProperty('--sidebar-primary', sidebarPrimaryHsl);
+    root.style.setProperty('--sidebar-ring', sidebarPrimaryHsl);
+    root.style.setProperty('--primary-foreground', fgHsl);
+    root.style.setProperty('--sidebar-primary-foreground', fgHsl);
 
     // Density
     if (preferences.density === 'compact') {

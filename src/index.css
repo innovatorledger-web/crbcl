@@ -180,12 +180,14 @@
     --sidebar-ring: 199 88% 46%;
     --chart-1: 199 88% 38%;
   }
-  .theme-yellow {
-    --primary: 43 90% 38%;
-    --ring: 43 90% 38%;
-    --sidebar-primary: 43 90% 46%;
-    --sidebar-ring: 43 90% 46%;
-    --chart-1: 43 90% 38%;
+  :root.theme-yellow, html.theme-yellow, [data-theme="yellow"], .theme-yellow {
+    --primary: 45 96% 45%;
+    --primary-foreground: 20 20% 10%;
+    --ring: 45 96% 45%;
+    --sidebar-primary: 45 96% 45%;
+    --sidebar-primary-foreground: 20 20% 10%;
+    --sidebar-ring: 45 96% 45%;
+    --chart-1: 45 96% 45%;
   }
 
   /* CRBCL Accent Palettes — Dark Mode */
@@ -280,12 +282,14 @@
     --sidebar-ring: 199 80% 56%;
     --chart-1: 199 80% 52%;
   }
-  .dark.theme-yellow, .dark .theme-yellow {
-    --primary: 45 90% 48%;
-    --ring: 45 90% 48%;
-    --sidebar-primary: 45 90% 52%;
-    --sidebar-ring: 45 90% 52%;
-    --chart-1: 45 90% 48%;
+  :root.dark.theme-yellow, html.dark.theme-yellow, .dark.theme-yellow, .dark .theme-yellow {
+    --primary: 45 95% 52%;
+    --primary-foreground: 20 20% 10%;
+    --ring: 45 95% 52%;
+    --sidebar-primary: 45 95% 52%;
+    --sidebar-primary-foreground: 20 20% 10%;
+    --sidebar-ring: 45 95% 52%;
+    --chart-1: 45 95% 52%;
   }
 
   /* Card Radius Variants */

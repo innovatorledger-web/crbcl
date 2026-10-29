@@ -138,9 +138,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     final displayName = (_currentUser['name'] as String?)?.isNotEmpty == true
         ? _currentUser['name'] as String
-        : 'Caseworker';
-    final roles = (_currentUser['roles'] as List?)?.cast<String>() ?? [];
-    final primaryRole = roles.isNotEmpty ? roles.first : 'Field Caseworker';
+        : 'System Administrator';
+    final rawRoles = (_currentUser['roles'] as List?)?.cast<String>() ?? [];
+    final primaryRole = rawRoles.any((r) => r.toLowerCase().contains('ceo'))
+        ? 'CEO'
+        : rawRoles.any((r) => r.toLowerCase().contains('executive'))
+            ? 'Executive Director'
+            : 'IT Admin';
 
     return Scaffold(
       appBar: AppBar(

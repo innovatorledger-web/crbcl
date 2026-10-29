@@ -6,23 +6,7 @@
  */
 
 export const ROLES = [
-  { key: "caseworker", label: "Caseworker — Direct Client & Case Management" },
-  { key: "supervisor", label: "Supervisor — Casework Approvals & Reviews" },
-  { key: "director_manager", label: "Director / Manager — Departmental Operations" },
-  { key: "front_desk", label: "Front Desk / First Impression — Intake Reception & Form Triage" },
-  { key: "office_coordinator", label: "Office Coordinator — Operations, Facilities & Fleet Coordination" },
-  { key: "navigator", label: "Navigator — System Navigation Specialist & Referral Intake" },
-  { key: "resource_worker", label: "Resource Worker — Kinship & Foster Caregiver Recruitment" },
-  { key: "resource_supervisor", label: "Resource Supervisor — Approvals & Recruitment Reviews" },
-  { key: "resource_director", label: "Resource Director — Resource Unit Leadership & Licensing" },
-  { key: "cultural_worker", label: "Cultural Worker — Cultural Supports & Elders" },
-  { key: "clinical_staff", label: "Clinical Staff — Medical & Therapy" },
-  { key: "case_aide", label: "Case Aide — Support Worker" },
-  { key: "finance_staff", label: "Finance Staff — Billing & Invoices" },
-  { key: "hr_staff", label: "HR Staff — Human Resources & Personnel Management" },
-  { key: "it_admin", label: "IT Administrator — Standalone System Admin" },
-  { key: "executive_director", label: "Executive Director — Cross-Agency Leadership" },
-  { key: "ceo", label: "Chief Executive Officer (CEO) — Strategic Leadership & Governance" },
-  { key: "board_member", label: "Board Member — Governance Oversight & Review" },
-  { key: "external_worker", label: "External Worker — Partner Agency Access" },
+  { key: "it_admin", label: "IT Admin (IT Administrator)" },
+  { key: "executive_director", label: "Executive Director" },
+  { key: "ceo", label: "CEO (Chief Executive Officer)" },
 ];

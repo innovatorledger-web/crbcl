@@ -169,25 +169,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> with Single
   ];
 
   static const _canonicalRoles = [
-    {'key': 'caseworker', 'label': 'Caseworker — Direct Client & Case Management', 'dest': '/ (Staff Dashboard)'},
-    {'key': 'supervisor', 'label': 'Supervisor — Casework Approvals & Reviews', 'dest': '/ (Staff Dashboard)'},
-    {'key': 'director_manager', 'label': 'Director / Manager — Departmental Operations', 'dest': '/director (Director\'s Dashboard)'},
-    {'key': 'front_desk', 'label': 'Front Desk / First Impression — Intake Reception & Form Triage', 'dest': '/front-desk (Front Desk Portal)'},
-    {'key': 'office_coordinator', 'label': 'Office Coordinator — Operations, Facilities & Fleet Coordination', 'dest': '/office-coordinator (Office Workspace)'},
-    {'key': 'navigator', 'label': 'Navigator — System Navigation Specialist & Referral Intake', 'dest': '/navigator (Navigator Hub)'},
-    {'key': 'resource_worker', 'label': 'Resource Worker — Kinship & Foster Caregiver Recruitment', 'dest': '/resource-team (Resource Team Dashboard)'},
-    {'key': 'resource_supervisor', 'label': 'Resource Supervisor — Approvals & Recruitment Reviews', 'dest': '/resource-team (Resource Team Dashboard)'},
-    {'key': 'resource_director', 'label': 'Resource Director — Resource Unit Leadership & Licensing', 'dest': '/resource-team (Resource Team Dashboard)'},
-    {'key': 'cultural_worker', 'label': 'Cultural Worker — Cultural Supports & Elders', 'dest': '/ (Staff Dashboard)'},
-    {'key': 'clinical_staff', 'label': 'Clinical Staff — Medical & Therapy', 'dest': '/ (Staff Dashboard)'},
-    {'key': 'case_aide', 'label': 'Case Aide — Support Worker', 'dest': '/ (Staff Dashboard)'},
-    {'key': 'finance_staff', 'label': 'Finance Staff — Billing & Invoices', 'dest': '/finance (Finance & Invoicing)'},
-    {'key': 'hr_staff', 'label': 'HR Staff — Human Resources & Personnel Management', 'dest': '/hr (HR Portal)'},
-    {'key': 'it_admin', 'label': 'IT Administrator — Standalone System Admin', 'dest': '/admin (IT Admin Portal)'},
+    {'key': 'it_admin', 'label': 'IT Admin (IT Administrator)', 'dest': '/admin-dashboard (IT Admin Console)'},
     {'key': 'executive_director', 'label': 'Executive Director — Cross-Agency Leadership', 'dest': '/executive (Executive Dashboard)'},
-    {'key': 'ceo', 'label': 'Chief Executive Officer (CEO) — Strategic Leadership & Governance', 'dest': '/ceo (CEO Dashboard)'},
-    {'key': 'board_member', 'label': 'Board Member — Governance Oversight & Review', 'dest': '/board (Board Portal)'},
-    {'key': 'external_worker', 'label': 'External Worker — Partner Agency Access', 'dest': '/ (Staff Dashboard)'},
+    {'key': 'ceo', 'label': 'CEO (Chief Executive Officer)', 'dest': '/ceo (CEO Dashboard)'},
   ];
 
   static const List<Map<String, dynamic>> _canonical24Teams = [
@@ -817,7 +801,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> with Single
     final emailCtrl = TextEditingController();
     final passwordCtrl = TextEditingController(text: _generateStrongPassword());
     bool showPassword = true;
-    String selectedRole = 'caseworker';
+    String selectedRole = 'it_admin';
     String selectedDept = 'Direct Client Care';
     bool allTeamsSelected = true;
     final Set<String> customTeams = {};
@@ -1837,7 +1821,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> with Single
                               });
                               await _authService.approveAdminUser(
                                 u['id'] as String? ?? '',
-                                roleKey: u['role_key'] as String? ?? 'caseworker',
+                                roleKey: u['role_key'] as String? ?? 'it_admin',
                               );
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(

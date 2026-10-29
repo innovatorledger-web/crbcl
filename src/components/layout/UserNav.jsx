@@ -88,21 +88,10 @@ export default function UserNav() {
   };
 
   const getRoleLabel = () => {
-    if (isItAdmin) return "System Administrator";
-    if (roles.includes("ceo")) return "Chief Executive Officer";
+    if (isItAdmin) return "IT Admin";
+    if (roles.includes("ceo")) return "CEO";
     if (roles.includes("executive_director")) return "Executive Director";
-    if (roles.includes("resource_director")) return "Resource Director";
-    if (roles.includes("resource_supervisor")) return "Resource Supervisor";
-    if (roles.includes("resource_worker")) return "Resource Worker";
-    if (roles.includes("director_manager")) return "Director";
-    if (roles.includes("supervisor")) return "Supervisor";
-    if (roles.includes("clinical_staff")) return "Clinical";
-    if (roles.includes("finance_staff")) return "Finance";
-    if (roles.includes("cultural_worker")) return "Cultural";
-    if (roles.includes("caseworker")) return "Caseworker";
-    if (roles.includes("office_coordinator")) return "Office Coordinator";
-    if (roles.includes("front_desk")) return "Front Desk";
-    return user?.role ? user.role.replace("_", " ") : "Staff";
+    return "IT Admin";
   };
 
   const initials = getInitials(user?.full_name || user?.display_name, user?.email);

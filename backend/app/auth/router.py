@@ -208,12 +208,15 @@ async def login(
     csrf_token = generate_csrf_token()
     _set_auth_cookies(response, access_token, refresh_token, csrf_token)
 
+    pref_res = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    prefs = pref_res.scalars().all()
+
     settings = get_settings()
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=settings.access_token_ttl,
-        user=_build_user_info(user),
+        user=_build_user_info(user, prefs=prefs),
     )
 
 
@@ -311,6 +314,50 @@ async def update_profile(
     return _build_user_info(fresh_user or user, prefs=prefs)
 
 
+@router.post("/avatar")
+async def upload_avatar(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload or update user profile avatar for web and mobile platforms."""
+    content_type = request.headers.get("content-type", "")
+    avatar_val = None
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        uploaded_file = form.get("file")
+        if uploaded_file and hasattr(uploaded_file, "read"):
+            data = await uploaded_file.read()
+            import base64
+            b64_str = base64.b64encode(data).decode("utf-8")
+            mime = getattr(uploaded_file, "content_type", "image/jpeg") or "image/jpeg"
+            avatar_val = f"data:{mime};base64,{b64_str}"
+    else:
+        try:
+            body = await request.json()
+            avatar_val = body.get("avatar_url") or body.get("avatarUrl")
+        except Exception:
+            avatar_val = None
+
+    if avatar_val is not None:
+        pref_res = await db.execute(
+            select(UserPreference).where(
+                UserPreference.user_id == user.id,
+                UserPreference.key == "avatar_url",
+            )
+        )
+        pref = pref_res.scalars().first()
+        if pref:
+            pref.value = avatar_val
+        else:
+            pref = UserPreference(user_id=user.id, key="avatar_url", value=avatar_val)
+            db.add(pref)
+        await db.commit()
+
+    return {"avatar_url": avatar_val, "success": True, "message": "Avatar updated successfully"}
+
+
 @router.post("/change-password", response_model=MessageResponse)
 async def change_password(
     body: ChangePasswordRequest,
@@ -335,25 +382,9 @@ async def change_password(
 
 
 VALID_PLATFORM_ROLES: frozenset[str] = frozenset({
-    "ceo",
-    "executive_director",
-    "director_manager",
-    "supervisor",
-    "caseworker",
-    "case_aide",
-    "finance_staff",
-    "hr_staff",
     "it_admin",
-    "cultural_worker",
-    "clinical_staff",
-    "external_worker",
-    "resource_director",
-    "resource_supervisor",
-    "resource_worker",
-    "front_desk",
-    "board_member",
-    "navigator",
-    "office_coordinator",
+    "executive_director",
+    "ceo",
 })
 
 
@@ -465,11 +496,14 @@ async def verify_otp(
 
     # Refresh user with roles/permissions loaded
     user = await auth.get_user_by_id(user.id)
+    pref_res = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    prefs = pref_res.scalars().all()
+
     settings = get_settings()
     return VerifyOtpResponse(
         access_token=access_token,
         expires_in=settings.access_token_ttl,
-        user=_build_user_info(user),
+        user=_build_user_info(user, prefs=prefs),
     )
 
 
@@ -632,12 +666,15 @@ async def verify_pin(
     csrf_token = generate_csrf_token()
     _set_auth_cookies(response, access_token, refresh_token, csrf_token)
 
+    pref_res = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    prefs = pref_res.scalars().all()
+
     settings = get_settings()
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=settings.access_token_ttl,
-        user=_build_user_info(user),
+        user=_build_user_info(user, prefs=prefs),
     )
 
 

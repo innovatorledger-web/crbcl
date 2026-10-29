@@ -153,8 +153,8 @@ class MobileThemeService extends ChangeNotifier {
     CrbclPalette(
       key: 'yellow',
       label: 'Yellow',
-      primary: Color(0xFFB8870A),
-      darkPrimary: Color(0xFFDFA30C),
+      primary: Color(0xFFEAB308),
+      darkPrimary: Color(0xFFFBBF24),
       onPrimary: Colors.black,
     ),
   ];

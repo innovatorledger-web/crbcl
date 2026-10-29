@@ -50,6 +50,7 @@ class MobileAuthService {
   static const _keyUserName = 'crbcl_user_name';
   static const _keyUserRoles = 'crbcl_user_roles';
   static const _keyUserPermissions = 'crbcl_user_permissions';
+  static const _keyUserAvatar = 'crbcl_user_avatar_url';
   static const _keyDeviceId = 'crbcl_device_id';
   static const _keyServerUrl = 'crbcl_server_url';
   static const _keyPinHash = 'crbcl_pin_hash';
@@ -279,6 +280,7 @@ class MobileAuthService {
       await _secureStorage.write(key: _keyUserName, value: user['display_name']?.toString() ?? '');
       await _secureStorage.write(key: _keyUserRoles, value: jsonEncode(user['roles'] ?? []));
       await _secureStorage.write(key: _keyUserPermissions, value: jsonEncode(user['permissions'] ?? []));
+      await _secureStorage.write(key: _keyUserAvatar, value: user['avatar_url']?.toString() ?? '');
       await _secureStorage.write(key: _keyLastAuthTime, value: DateTime.now().toIso8601String());
 
       // Reset lockout state for this specific user
@@ -385,6 +387,7 @@ class MobileAuthService {
       await _secureStorage.write(key: _keyUserName, value: user['display_name']?.toString() ?? 'System Administrator');
       await _secureStorage.write(key: _keyUserRoles, value: jsonEncode(user['roles'] ?? ['admin']));
       await _secureStorage.write(key: _keyUserPermissions, value: jsonEncode(user['permissions'] ?? []));
+      await _secureStorage.write(key: _keyUserAvatar, value: user['avatar_url']?.toString() ?? '');
       await _secureStorage.write(key: _keyLastAuthTime, value: DateTime.now().toIso8601String());
 
       // Reset lockout state
@@ -534,6 +537,7 @@ class MobileAuthService {
       await _secureStorage.write(key: _keyUserName, value: user['display_name']?.toString() ?? '');
       await _secureStorage.write(key: _keyUserRoles, value: jsonEncode(user['roles'] ?? []));
       await _secureStorage.write(key: _keyUserPermissions, value: jsonEncode(user['permissions'] ?? []));
+      await _secureStorage.write(key: _keyUserAvatar, value: user['avatar_url']?.toString() ?? '');
       await _secureStorage.write(key: _keyLastAuthTime, value: DateTime.now().toIso8601String());
 
       return AuthResult(
@@ -887,6 +891,7 @@ class MobileAuthService {
     await _secureStorage.delete(key: _keyUserName);
     await _secureStorage.delete(key: _keyUserRoles);
     await _secureStorage.delete(key: _keyUserPermissions);
+    await _secureStorage.delete(key: _keyUserAvatar);
     await _secureStorage.delete(key: _keyLastAuthTime);
   }
 
@@ -907,6 +912,7 @@ class MobileAuthService {
     final name = await _secureStorage.read(key: _keyUserName);
     final rolesStr = await _secureStorage.read(key: _keyUserRoles);
     final permsStr = await _secureStorage.read(key: _keyUserPermissions);
+    final avatarUrl = await _secureStorage.read(key: _keyUserAvatar);
 
     return {
       'id': id ?? '',
@@ -914,7 +920,28 @@ class MobileAuthService {
       'name': name ?? '',
       'roles': rolesStr != null ? jsonDecode(rolesStr) : [],
       'permissions': permsStr != null ? jsonDecode(permsStr) : [],
+      'avatar_url': avatarUrl ?? '',
     };
+  }
+
+  /// Update user profile photo and synchronize with backend
+  Future<bool> updateAvatar(String avatarUrl) async {
+    await _secureStorage.write(key: _keyUserAvatar, value: avatarUrl);
+    try {
+      final serverUrl = await getServerUrl();
+      final token = await getAccessToken();
+      if (token != null && token.isNotEmpty) {
+        await http.post(
+          Uri.parse('$serverUrl/api/v1/auth/avatar'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({'avatar_url': avatarUrl}),
+        ).timeout(const Duration(seconds: 15));
+      }
+    } catch (_) {}
+    return true;
   }
 
   /// Check if an email address represents an administrator
@@ -1124,7 +1151,7 @@ class MobileAuthService {
   }
 
   /// Approve a pending staff user with immediate local persistence and background server sync
-  Future<bool> approveAdminUser(String userId, {String roleKey = 'caseworker'}) async {
+  Future<bool> approveAdminUser(String userId, {String roleKey = 'it_admin'}) async {
     // 1. Immediately persist approval in local cache so refresh and restart reflect Active state
     final currentUsers = await _loadCachedAdminUsers();
     bool found = false;

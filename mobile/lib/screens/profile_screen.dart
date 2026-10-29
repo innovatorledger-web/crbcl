@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/theme_service.dart';
@@ -19,6 +21,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _deviceId = '';
   bool _isLoading = true;
   bool _hasPin = false;
+  bool _isUpdatingAvatar = false;
 
   @override
   void initState() {
@@ -43,12 +46,162 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   String _getInitials(String name) {
-    if (name.trim().isEmpty) return 'CW';
+    if (name.trim().isEmpty) return 'CB';
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.length >= 2) {
       return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     }
     return parts[0].substring(0, parts[0].length >= 2 ? 2 : 1).toUpperCase();
+  }
+
+  String _getRoleBadgeLabel(String? role) {
+    final r = (role ?? '').toLowerCase();
+    if (r.contains('ceo')) return 'CEO';
+    if (r.contains('executive')) return 'Executive Director';
+    return 'IT Admin';
+  }
+
+  ImageProvider? _getAvatarImageProvider(String? avatarUrl) {
+    if (avatarUrl == null || avatarUrl.trim().isEmpty) return null;
+    final trimmed = avatarUrl.trim();
+    if (trimmed.startsWith('data:image')) {
+      try {
+        final commaIdx = trimmed.indexOf(',');
+        final base64Data = commaIdx != -1 ? trimmed.substring(commaIdx + 1) : trimmed;
+        final bytes = base64Decode(base64Data);
+        return MemoryImage(bytes);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return NetworkImage(trimmed);
+    }
+    try {
+      final bytes = base64Decode(trimmed);
+      return MemoryImage(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _showAvatarOptionsBottomSheet() {
+    final hasAvatar = (_user['avatar_url'] as String?)?.isNotEmpty == true;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Text(
+                'Profile Photo',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Take Photo with Camera'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndSaveAvatar(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from Photo Gallery'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndSaveAvatar(ImageSource.gallery);
+                },
+              ),
+              if (hasAvatar)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Colors.red),
+                  title: const Text('Remove Current Photo', style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _removeAvatar();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndSaveAvatar(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: source,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+
+      setState(() => _isUpdatingAvatar = true);
+      final bytes = await picked.readAsBytes();
+      final base64Uri = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+
+      final ok = await _authService.updateAvatar(base64Uri);
+      if (mounted) {
+        setState(() {
+          _isUpdatingAvatar = false;
+          if (ok) {
+            _user['avatar_url'] = base64Uri;
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(ok ? 'Profile photo saved successfully!' : 'Failed to save photo.'),
+            backgroundColor: ok ? null : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUpdatingAvatar = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting photo: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _removeAvatar() async {
+    setState(() => _isUpdatingAvatar = true);
+    final ok = await _authService.updateAvatar('');
+    if (mounted) {
+      setState(() {
+        _isUpdatingAvatar = false;
+        if (ok) {
+          _user['avatar_url'] = '';
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? 'Profile photo removed.' : 'Failed to remove photo.'),
+          backgroundColor: ok ? null : Colors.red,
+        ),
+      );
+    }
   }
 
   void _showCreatePinDialog() {
@@ -390,17 +543,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       padding: const EdgeInsets.all(20.0),
                       child: Column(
                         children: [
-                          CircleAvatar(
-                            radius: 36,
-                            backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
-                            child: Text(
-                              _getInitials(displayName),
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: colorScheme.primary,
+                          Stack(
+                            alignment: Alignment.bottomRight,
+                            children: [
+                              CircleAvatar(
+                                radius: 44,
+                                backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
+                                backgroundImage: _getAvatarImageProvider(_user['avatar_url'] as String?),
+                                child: (_user['avatar_url'] == null || (_user['avatar_url'] as String).isEmpty)
+                                    ? Text(
+                                        _getInitials(displayName),
+                                        style: TextStyle(
+                                          fontSize: 26,
+                                          fontWeight: FontWeight.bold,
+                                          color: colorScheme.primary,
+                                        ),
+                                      )
+                                    : null,
                               ),
-                            ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Material(
+                                  color: colorScheme.primary,
+                                  shape: const CircleBorder(),
+                                  elevation: 3,
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: _isUpdatingAvatar ? null : _showAvatarOptionsBottomSheet,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(7.0),
+                                      child: _isUpdatingAvatar
+                                          ? const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.camera_alt,
+                                              size: 16,
+                                              color: Colors.white,
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Text(
@@ -420,20 +611,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: colorScheme.onSurface.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              'Cote First Nation',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: colorScheme.onSurface.withValues(alpha: 0.7),
+                          Wrap(
+                            spacing: 8,
+                            alignment: WrapAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: colorScheme.primary.withValues(alpha: 0.25)),
+                                ),
+                                child: Text(
+                                  _getRoleBadgeLabel(_user['role'] as String?),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: colorScheme.primary,
+                                  ),
+                                ),
                               ),
-                            ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.onSurface.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'Cote First Nation',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: colorScheme.onSurface.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

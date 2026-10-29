@@ -38,8 +38,34 @@
             root.classList.remove('theme-' + a);
             root.classList.remove('theme-' + a.replace('-', '_'));
           });
+          var accentMap = {
+            'yellow': { primary: isDark ? '45 95% 52%' : '45 96% 45%', fg: '20 20% 10%' },
+            'crbcl': { primary: isDark ? '4 55% 50%' : '4 60% 38%', fg: '0 0% 100%' },
+            'burgundy': { primary: isDark ? '348 55% 48%' : '348 60% 32%', fg: '0 0% 100%' },
+            'earth': { primary: isDark ? '24 60% 50%' : '24 65% 38%', fg: '0 0% 100%' },
+            'forest': { primary: isDark ? '145 45% 44%' : '145 50% 30%', fg: '0 0% 100%' },
+            'prairie': { primary: isDark ? '38 75% 48%' : '38 80% 36%', fg: '0 0% 100%' },
+            'ocean': { primary: isDark ? '215 60% 52%' : '215 65% 40%', fg: '0 0% 100%' },
+            'teal': { primary: isDark ? '174 55% 44%' : '174 60% 32%', fg: '0 0% 100%' },
+            'neutral': { primary: isDark ? '220 18% 52%' : '220 20% 35%', fg: '0 0% 100%' },
+            'pink': { primary: isDark ? '335 75% 58%' : '335 78% 46%', fg: '0 0% 100%' },
+            'light-pink': { primary: isDark ? '340 75% 68%' : '340 68% 54%', fg: '0 0% 100%' },
+            'purple': { primary: isDark ? '280 60% 56%' : '280 65% 38%', fg: '0 0% 100%' },
+            'light-purple': { primary: isDark ? '265 65% 66%' : '265 55% 48%', fg: '0 0% 100%' },
+            'sky-blue': { primary: isDark ? '199 80% 52%' : '199 88% 38%', fg: '0 0% 100%' },
+          };
+
           if (validAccents.indexOf(accent) !== -1) {
             root.classList.add('theme-' + accent);
+            var entry = accentMap[accent];
+            if (entry) {
+              root.style.setProperty('--primary', entry.primary);
+              root.style.setProperty('--ring', entry.primary);
+              root.style.setProperty('--sidebar-primary', entry.primary);
+              root.style.setProperty('--sidebar-ring', entry.primary);
+              root.style.setProperty('--primary-foreground', entry.fg);
+              root.style.setProperty('--sidebar-primary-foreground', entry.fg);
+            }
           } else {
             root.classList.add('theme-crbcl');
           }
